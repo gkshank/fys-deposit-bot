@@ -17,7 +17,7 @@ let currentQR = "";
 const ADMIN_NUMBER = '254701339573@c.us';
 
 // 3) Bot config: editable strings and channel ID
-//    Admin can change these with commands like: "edit <key> <newValue>"
+//    Admin can change these with commands like: edit <key> <newValue>
 let botConfig = {
   welcomeMessage: "*👋 Welcome to FY'S PROPERTY Deposit Bot!*\nHow much would you like to deposit? 💰",
   depositChosen: "*👍 Great!* You've chosen to deposit *Ksh {amount}*.\nNow, please provide your deposit number (e.g., your account number) 📱",
@@ -31,6 +31,11 @@ let botConfig = {
 
 // In-memory conversation state per user
 const conversations = {};
+
+// In-memory storage for saved users and groups
+let savedUsers = new Set();
+let savedGroups = new Set();
+let bulkMessageSessions = {};
 
 /***********************************************************
  * WHATSAPP CLIENT
@@ -66,17 +71,13 @@ function parsePlaceholders(template, data) {
 
 // Formats a phone number for WhatsApp. E.g. "07..." => "2547..."
 function formatPhoneNumber(numStr) {
-  // Remove non-digits
   let cleaned = numStr.replace(/[^\d]/g, '');
-  // If starts with 0 => replace with 254
   if (cleaned.startsWith('0')) {
     cleaned = '254' + cleaned.substring(1);
   }
-  // Must start with 254
   if (!cleaned.startsWith('254')) {
     return null;
   }
-  // Must be at least 10 or 11+ digits
   if (cleaned.length < 10) {
     return null;
   }
@@ -88,11 +89,11 @@ async function sendSTKPush(amount, phone) {
   const payload = {
     amount: amount,
     phone_number: phone,
-    channel_id: botConfig.channelID, // use the editable channelID
+    channel_id: botConfig.channelID,
     provider: "m-pesa",
     external_reference: "INV-009",
     customer_name: "John Doe",
-    callback_url: "https://your-callback-url", // replace if needed
+    callback_url: "https://your-callback-url",
     account_reference: "FY'S PROPERTY",
     transaction_desc: "FY'S PROPERTY Payment",
     remarks: "FY'S PROPERTY",
@@ -100,12 +101,16 @@ async function sendSTKPush(amount, phone) {
     companyName: "FY'S PROPERTY"
   };
   try {
-    const response = await axios.post('https://backend.payhero.co.ke/api/v2/payments', payload, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6c2lYb09taHRYSlFMbWZ0dFdqeGp4SG13NDFTekJLckl2Z2NWd2F1aw=='
+    const response = await axios.post(
+      'https://backend.payhero.co.ke/api/v2/payments',
+      payload,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6c2lYb09taHRYSlFMbWZ0dFdqeGp4SG13NDFTekJLckl2Z2NWd2F1aw=='
+        }
       }
-    });
+    );
     return response.data.reference;
   } catch (error) {
     console.error("STK Push Error:", error);
@@ -136,35 +141,18 @@ function sendAdminAlert(text) {
   client.sendMessage(ADMIN_NUMBER, text);
 }
 
-// Parse broadcast command: "msg [254712345678,254701234567] Hello!"
-function parseBroadcastCommand(msg) {
-  const bracketStart = msg.indexOf('[');
-  const bracketEnd = msg.indexOf(']');
-  if (bracketStart < 0 || bracketEnd < 0) return null;
-
-  const numbersStr = msg.substring(bracketStart + 1, bracketEnd).trim();
-  const theMessage = msg.substring(bracketEnd + 1).trim();
-  const numbersArr = numbersStr.split(',').map(n => n.trim());
-  return { numbers: numbersArr, text: theMessage };
-}
-
 // Admin help message
 function getAdminHelp() {
   return (
-    "*ADMIN COMMANDS:*\n" +
-    "1) *admin* - Show this help.\n" +
-    "2) *edit <key> <newText>* - Edit any of these keys:\n" +
-    "   - welcomeMessage\n" +
-    "   - depositChosen\n" +
-    "   - paymentInitiated\n" +
-    "   - countdownUpdate\n" +
-    "   - paymentSuccess\n" +
-    "   - paymentFooter\n" +
-    "   - fromAdmin\n" +
-    "   - channelID\n" +
-    "   Example:\n     edit depositChosen Great, you decided to deposit {amount} Ksh!\n" +
-    "3) *msg [2547...,2547...] message...* - Broadcast to multiple users.\n" +
-    "   Example:\n     msg [254712345678,254701234567] Hello from Admin GK-FY!\n"
+    "ADMIN COMMANDS:\n" +
+    "1) admin - Show this help.\n" +
+    "2) edit <key> <newValue> - Edit any botConfig key.\n" +
+    "3) save user <phone> - Save a user number.\n" +
+    "4) save group <jid> - Save a group JID.\n" +
+    "5) view users | view groups - List saved contacts.\n" +
+    "6) delete user <phone> | delete group <jid> - Remove saved contact.\n" +
+    "7) send to users | send to groups | send to all - Bulk message.\n" +
+    "   Then type your message and confirm with yes/no."
   );
 }
 
@@ -176,201 +164,189 @@ client.on('message', async message => {
   const text = message.body.trim();
   const lowerText = text.toLowerCase();
 
-  // 1) If this is a group message, ignore
+  // ignore group-originated user messages here
   if (sender.endsWith('@g.us')) {
-    return; // do nothing in group chats
+    return;
   }
 
-  // 2) If user is admin => handle admin commands
+  // admin-only commands
   if (sender === ADMIN_NUMBER) {
-    // Show admin help if "admin"
     if (lowerText === 'admin') {
-      message.reply(getAdminHelp());
-      return;
+      return message.reply(getAdminHelp());
     }
-    // If "edit <key> <newValue>"
+
     if (lowerText.startsWith('edit ')) {
       const parts = text.split(' ');
       if (parts.length < 3) {
-        message.reply("*⚠️ Invalid format.* Use: edit <key> <newValue>");
-        return;
+        return message.reply("⚠️ Invalid format. Use: edit <key> <newValue>");
       }
       const key = parts[1];
       const newValue = text.substring(`edit ${key} `.length).trim();
-
       if (!botConfig.hasOwnProperty(key)) {
-        message.reply("*⚠️ Unknown key.* Valid keys: welcomeMessage, depositChosen, paymentInitiated, countdownUpdate, paymentSuccess, paymentFooter, fromAdmin, channelID");
-        return;
+        return message.reply("⚠️ Unknown key.");
       }
-      // If it's channelID, parse as number
       if (key === 'channelID') {
         const newID = parseInt(newValue);
         if (isNaN(newID)) {
-          message.reply("*⚠️ channelID must be a number.*");
-          return;
+          return message.reply("⚠️ channelID must be a number.");
         }
         botConfig.channelID = newID;
-        message.reply(`*channelID updated to:* ${newID}`);
-        return;
+        return message.reply(`channelID updated to: ${newID}`);
       }
-      // Otherwise store as string
       botConfig[key] = newValue;
-      message.reply(`*${key}* updated successfully!`);
-      return;
+      return message.reply(`${key} updated successfully.`);
     }
-    // If "msg ["
-    if (lowerText.startsWith('msg [')) {
-      const result = parseBroadcastCommand(text);
-      if (!result) {
-        message.reply("*⚠️ Invalid format.* Use: msg [2547...,2547...] Your message");
-        return;
-      }
-      const { numbers, text: adminMsg } = result;
-      if (!numbers || !adminMsg) {
-        message.reply("*⚠️ Invalid format.*");
-        return;
-      }
-      // Send to each user with number formatting
-      for (let rawNum of numbers) {
-        const finalNumber = formatPhoneNumber(rawNum);
-        if (!finalNumber) {
-          // skip or notify
-          message.reply(`*⚠️ Skipping invalid number:* ${rawNum}`);
-          continue;
-        }
-        try {
-          await client.sendMessage(finalNumber, `*${botConfig.fromAdmin}:*\n${adminMsg}`);
-        } catch (err) {
-          console.error("Mass message error =>", err);
-          message.reply(`*⚠️ Could not send to:* ${rawNum}`);
-        }
-      }
-      message.reply("*Message sent successfully to the specified users!*");
-      return;
+
+    // save user
+    if (lowerText.startsWith('save user ')) {
+      const raw = text.split('save user ')[1].trim();
+      const num = formatPhoneNumber(raw);
+      if (!num) return message.reply("⚠️ Invalid number format.");
+      savedUsers.add(num);
+      return message.reply(`✅ Saved user: ${num}`);
     }
-    // If admin typed something else, fall through to deposit flow
+
+    // save group
+    if (lowerText.startsWith('save group ')) {
+      const jid = text.split('save group ')[1].trim();
+      if (!jid.endsWith('@g.us')) {
+        return message.reply("⚠️ Invalid group JID.");
+      }
+      savedGroups.add(jid);
+      return message.reply(`✅ Saved group: ${jid}`);
+    }
+
+    // view lists
+    if (lowerText === 'view users') {
+      const list = [...savedUsers].join('\n') || 'No users saved.';
+      return message.reply(`Saved users:\n${list}`);
+    }
+    if (lowerText === 'view groups') {
+      const list = [...savedGroups].join('\n') || 'No groups saved.';
+      return message.reply(`Saved groups:\n${list}`);
+    }
+
+    // delete saved contact
+    if (lowerText.startsWith('delete user ')) {
+      const raw = text.split('delete user ')[1].trim();
+      const num = formatPhoneNumber(raw);
+      if (!savedUsers.has(num)) return message.reply("⚠️ Number not found.");
+      savedUsers.delete(num);
+      return message.reply(`🗑️ Deleted user: ${num}`);
+    }
+    if (lowerText.startsWith('delete group ')) {
+      const jid = text.split('delete group ')[1].trim();
+      if (!savedGroups.has(jid)) return message.reply("⚠️ Group not found.");
+      savedGroups.delete(jid);
+      return message.reply(`🗑️ Deleted group: ${jid}`);
+    }
+
+    // initiate bulk message session
+    if (lowerText === 'send to users' || lowerText === 'send to groups' || lowerText === 'send to all') {
+      const type = lowerText.replace('send to ', '');
+      bulkMessageSessions[sender] = { type: type, message: null };
+      return message.reply(`Type the message you want to send to ${type.replace('all','users and groups')}:`);
+    }
+
+    // collect bulk message text
+    if (bulkMessageSessions[sender] && !bulkMessageSessions[sender].message) {
+      bulkMessageSessions[sender].message = text;
+      return message.reply(`Are you sure you want to send:\n\n"${text}"\n\ntype yes to send or no to cancel`);
+    }
+
+    // confirmation step
+    if (bulkMessageSessions[sender] && bulkMessageSessions[sender].message) {
+      if (lowerText === 'yes') {
+        const session = bulkMessageSessions[sender];
+        const msgText = session.message;
+
+        if (session.type === 'users' || session.type === 'all') {
+          for (let u of savedUsers) {
+            await client.sendMessage(u, msgText);
+          }
+        }
+        if (session.type === 'groups' || session.type === 'all') {
+          for (let g of savedGroups) {
+            await client.sendMessage(g, msgText);
+          }
+        }
+        delete bulkMessageSessions[sender];
+        return message.reply("✅ Bulk message sent.");
+      }
+      if (lowerText === 'no') {
+        delete bulkMessageSessions[sender];
+        return message.reply("❌ Bulk message cancelled.");
+      }
+    }
+
+    // fall through to deposit flow if not an admin command
   }
 
-  // 3) DEPOSIT FLOW
-  if (lowerText === 'start') {
+  // deposit flow
+  if (text.toLowerCase() === 'start') {
     conversations[sender] = { stage: 'awaitingAmount' };
-    message.reply(botConfig.welcomeMessage);
-    return;
+    return message.reply(botConfig.welcomeMessage);
   }
-
-  // If no conversation, initialize it
   if (!conversations[sender]) {
     conversations[sender] = { stage: 'awaitingAmount' };
-    message.reply(botConfig.welcomeMessage);
-    return;
+    return message.reply(botConfig.welcomeMessage);
   }
 
   const conv = conversations[sender];
 
-  // Stage 1: awaitingAmount
   if (conv.stage === 'awaitingAmount') {
     const amount = parseInt(text);
     if (isNaN(amount) || amount <= 0) {
-      message.reply("*⚠️ Please enter a valid deposit amount in Ksh.*");
-      return;
+      return message.reply("⚠️ Please enter a valid deposit amount in Ksh.");
     }
     conv.amount = amount;
     conv.stage = 'awaitingDepositNumber';
-    const replyText = parsePlaceholders(botConfig.depositChosen, {
-      amount: String(amount)
-    });
-    message.reply(replyText);
-    return;
+    return message.reply(parsePlaceholders(botConfig.depositChosen, { amount: String(amount) }));
   }
 
-  // Stage 2: awaitingDepositNumber
   if (conv.stage === 'awaitingDepositNumber') {
     conv.depositNumber = text;
     conv.stage = 'processing';
-
-    // Immediately send STK push
     const ref = await sendSTKPush(conv.amount, conv.depositNumber);
     if (!ref) {
-      message.reply("*❌ Error:* Unable to initiate payment. Please try again later.");
       delete conversations[sender];
-      return;
+      return message.reply("❌ Error initiating payment. Try again later.");
     }
     conv.stkRef = ref;
-
-    // Alert admin about deposit attempt
     const attemptTime = new Date().toLocaleString("en-GB", { timeZone: "Africa/Nairobi" });
     sendAdminAlert(
-      `*💸 Deposit Attempt:*\n` +
-      `Amount: Ksh ${conv.amount}\n` +
-      `Deposit Number: ${conv.depositNumber}\n` +
-      `Time (KE): ${attemptTime}`
+      `Deposit attempt:\nAmount: Ksh ${conv.amount}\nNumber: ${conv.depositNumber}\nTime: ${attemptTime}`
     );
+    message.reply(parsePlaceholders(botConfig.paymentInitiated, { seconds: '20' }));
 
-    // Payment initiated message
-    const initText = parsePlaceholders(botConfig.paymentInitiated, {
-      seconds: '20'
-    });
-    message.reply(initText);
-
-    // After 10 seconds => update
     setTimeout(() => {
-      const midText = parsePlaceholders(botConfig.countdownUpdate, {
-        seconds: '10'
-      });
-      client.sendMessage(sender, midText);
+      client.sendMessage(sender, parsePlaceholders(botConfig.countdownUpdate, { seconds: '10' }));
     }, 10000);
 
-    // After 20 seconds => poll status
     setTimeout(async () => {
-      const statusData = await fetchTransactionStatus(conv.stkRef);
-      if (!statusData) {
-        message.reply("*❌ Error fetching payment status.* Please try again later.");
+      const status = await fetchTransactionStatus(conv.stkRef);
+      const now = new Date().toLocaleString("en-GB", { timeZone: "Africa/Nairobi" });
+      if (!status) {
         delete conversations[sender];
-        return;
+        return message.reply("❌ Error fetching status.");
       }
-      const finalStatus = statusData.status ? statusData.status.toUpperCase() : "UNKNOWN";
-      const providerReference = statusData.provider_reference || "";
-      const resultDesc = statusData.ResultDesc || "";
-      const currentDateTime = new Date().toLocaleString("en-GB", { timeZone: "Africa/Nairobi" });
-
-      if (finalStatus === "SUCCESS") {
-        // Payment success
-        const successMsg = parsePlaceholders(botConfig.paymentSuccess, {
+      const stat = status.status ? status.status.toUpperCase() : 'UNKNOWN';
+      const refCode = status.provider_reference || '';
+      const desc = status.ResultDesc || '';
+      if (stat === 'SUCCESS') {
+        message.reply(parsePlaceholders(botConfig.paymentSuccess, {
           amount: String(conv.amount),
           depositNumber: conv.depositNumber,
-          mpesaCode: providerReference,
-          date: currentDateTime
-        });
-        message.reply(successMsg);
-
-        // Admin alert about success
-        sendAdminAlert(
-          `*✅ Deposit Successful:*\n` +
-          `Amount: Ksh ${conv.amount}\n` +
-          `Deposit Number: ${conv.depositNumber}\n` +
-          `MPESA Code: ${providerReference}\n` +
-          `Time (KE): ${currentDateTime}`
-        );
-      } else if (finalStatus === "FAILED") {
-        let errMsg = "Your payment could not be completed. Please try again.";
-        if (resultDesc.toLowerCase().includes('insufficient')) {
-          errMsg = "Insufficient funds in your account.";
-        } else if (resultDesc.toLowerCase().includes('wrong pin') || resultDesc.toLowerCase().includes('incorrect pin')) {
-          errMsg = "The PIN you entered is incorrect.";
-        }
-        message.reply(`*❌ Payment Failed!* ${errMsg}\nType *Start* to try again.`);
-        sendAdminAlert(
-          `*❌ Deposit Failed:*\n` +
-          `Amount: Ksh ${conv.amount}\n` +
-          `Deposit Number: ${conv.depositNumber}\n` +
-          `Error: ${errMsg}\n` +
-          `Time (KE): ${currentDateTime}`
-        );
+          mpesaCode: refCode,
+          date: now
+        }));
+        sendAdminAlert(`Deposit success:\nAmount: Ksh ${conv.amount}\nNumber: ${conv.depositNumber}\nCode: ${refCode}\nTime: ${now}`);
       } else {
-        message.reply(
-          `*⏳ Payment Pending.* Current status: ${finalStatus}\n` +
-          `Please wait a bit longer or contact support.\n(Type *Start* to restart.)`
-        );
+        let errMsg = 'Please try again.';
+        if (desc.toLowerCase().includes('insufficient')) errMsg = 'Insufficient funds.';
+        if (desc.toLowerCase().includes('pin')) errMsg = 'Incorrect PIN.';
+        message.reply(`❌ Payment ${stat}. ${errMsg}\nType Start to retry.`);
+        sendAdminAlert(`Deposit failed:\nAmount: Ksh ${conv.amount}\nNumber: ${conv.depositNumber}\nError: ${errMsg}\nTime: ${now}`);
       }
       delete conversations[sender];
     }, 20000);
@@ -378,11 +354,6 @@ client.on('message', async message => {
     return;
   }
 });
-
-/***********************************************************
- * START THE WHATSAPP CLIENT
- ***********************************************************/
-client.initialize();
 
 /***********************************************************
  * EXPRESS SERVER to display the QR code
@@ -396,7 +367,7 @@ app.get('/', async (req, res) => {
     try {
       qrImage = await QRCode.toDataURL(currentQR);
     } catch (err) {
-      console.error("QR code generation error:", err);
+      console.error("QR code error:", err);
     }
   }
   res.send(`
@@ -407,37 +378,16 @@ app.get('/', async (req, res) => {
       <title>FY'S PROPERTY - WhatsApp Bot QR</title>
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <style>
-        body {
-          font-family: Arial, sans-serif;
-          text-align: center;
-          background: #222;
-          color: #fff;
-          padding: 20px;
-        }
-        h1 {
-          color: #12c99b;
-          margin-bottom: 20px;
-        }
-        .qr-container {
-          background: #333;
-          display: inline-block;
-          padding: 20px;
-          border-radius: 10px;
-        }
-        img {
-          max-width: 250px;
-          margin: 10px;
-        }
+        body { background: #222; color: #fff; font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+        h1 { color: #12c99b; margin-bottom: 20px; }
+        .qr-container { background: #333; display: inline-block; padding: 20px; border-radius: 10px; }
+        img { max-width: 250px; margin: 10px; }
       </style>
     </head>
     <body>
       <h1>Scan This QR Code to Authenticate Your Bot</h1>
       <div class="qr-container">
-        ${
-          qrImage
-            ? `<img src="${qrImage}" alt="WhatsApp QR Code" />`
-            : '<p>No QR code available yet. Please wait...</p>'
-        }
+        ${qrImage ? `<img src="${qrImage}" alt="WhatsApp QR Code" />` : '<p>No QR code yet. Please wait...</p>'}
       </div>
     </body>
     </html>
@@ -447,3 +397,6 @@ app.get('/', async (req, res) => {
 app.listen(port, () => {
   console.log(`Express server running on port ${port}`);
 });
+
+// start client
+client.initialize();
