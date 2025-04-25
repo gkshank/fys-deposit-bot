@@ -283,22 +283,27 @@ client.on('message', async message => {
       }
 
       // Find & Join Group by link
-      if (sess.awaiting === 'joinGroupLink') {
-        const parts = text.split('chat.whatsapp.com/');
-        if (parts.length < 2) {
-          return message.reply("⚠️ Invalid link. Try again:");
-        }
-        const code = parts[1].trim();
-        try {
-          const chat = await client.acceptInvite(code);
-          savedGroups.add(chat.id._serialized);
-          await message.reply(`✅ Joined & saved group:\n${chat.name}\nJID: ${chat.id._serialized}`);
-        } catch (e) {
-          return message.reply("❌ Unable to join. Check link and try again.");
-        }
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
-      }
+if (sess.awaiting === 'joinGroupLink') {
+  // Match chat.whatsapp.com/<inviteCode>
+  const match = text.match(/(?:https?:\/\/)?chat\.whatsapp\.com\/([A-Za-z0-9]+)/);
+  if (!match) {
+    return message.reply("⚠️ Invalid invite link. Please send a valid chat.whatsapp.com/… link:");
+  }
+  const inviteCode = match[1];
+  try {
+    // Attempt to join
+    const chat = await client.acceptInvite(inviteCode);
+    const jid  = chat.id._serialized;
+    savedGroups.add(jid);
+    // Success: show JID
+    await message.reply(`✅ Joined group successfully!\nJID: ${jid}`);
+  } catch (err) {
+    console.error("Join group error:", err);
+    return message.reply("❌ Unable to join group. Please check the link and try again.");
+  }
+  delete adminSessions[sender];
+  return showAdminMenu(sender);
+}
     }
 
     // No pending await: parse main menu choice
