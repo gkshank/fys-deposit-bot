@@ -28,11 +28,11 @@ let botConfig = {
   paymentFooter:    "Thank you for choosing FY'S PROPERTY! Type *Start* to deposit again."
 };
 
-// 4) In‐memory state
-const conversations = {};   // per‐user deposit flows
-const adminSessions = {};   // per‐admin menu flows
-let savedUsers    = new Set();
-let savedGroups   = new Set();
+// 4) In-memory state
+const conversations = {};   // per-user deposit flows
+const adminSessions = {};   // per-admin menu flows
+let   savedUsers    = new Set();
+let   savedGroups   = new Set();
 
 /***********************************************************
  * WHATSAPP CLIENT
@@ -59,14 +59,14 @@ function showAdminMenu(to) {
 1. Add User
 2. View Users
 3. Delete User
-4. Add Group
+4. Add Group (by JID)
 5. View Groups
 6. Delete Group
 7. Bulk → Users
 8. Bulk → Groups
 9. Bulk → All
 10. Config Bot Texts
-11. Find & Join Group
+11. Find & Join Group (invite link)
 0. Show Menu`;
   client.sendMessage(to, menu);
 }
@@ -90,7 +90,8 @@ function parsePlaceholders(template, data) {
 
 async function sendSTKPush(amount, phone) {
   const payload = {
-    amount, phone_number: phone,
+    amount,
+    phone_number: phone,
     channel_id: botConfig.channelID,
     provider: "m-pesa",
     external_reference: "INV-009",
@@ -124,7 +125,8 @@ async function fetchTransactionStatus(ref) {
   try {
     const res = await axios.get(
       `https://backend.payhero.co.ke/api/v2/transaction-status?reference=${encodeURIComponent(ref)}`,
-      { headers: {
+      {
+        headers: {
           'Authorization': 'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6c2lYb09taHRYSlFMbWZ0dFdqeGp4SG13NDFTekJLckl2Z2NWd2F1aw=='
         }
       }
@@ -144,7 +146,7 @@ client.on('message', async message => {
   const text   = message.body.trim();
   const lower  = text.toLowerCase();
 
-  // ignore group‐originated chats
+  // ignore group-originated chats here
   if (sender.endsWith('@g.us')) return;
 
   // ──────── ADMIN MENU FLOW ─────────────────────
@@ -184,7 +186,7 @@ client.on('message', async message => {
             adminSessions[sender] = { awaiting: 'edit:channelID' };
             return message.reply("Enter new Channel ID (number):");
           default:
-            return message.reply("Invalid choice. Send 0 to cancel.")  
+            return message.reply("Invalid choice. Send 0 to cancel.")
                            .then(() => showAdminMenu(sender));
         }
       }
@@ -230,7 +232,7 @@ client.on('message', async message => {
         return showAdminMenu(sender);
       }
 
-      // Add Group
+      // Add Group by JID
       if (sess.awaiting === 'addGroup') {
         const jid = text;
         if (!jid.endsWith('@g.us')) {
@@ -282,44 +284,35 @@ client.on('message', async message => {
         return showAdminMenu(sender);
       }
 
-      // Find & Join Group by link
-if (sess.awaiting === 'joinGroupLink') {
-  // 1) Try to pull the invite code via regex
-  const regex = /(?:https?:\/\/)?chat\.whatsapp\.com\/([\w-]+)/i;
-  const match = text.trim().match(regex);
-
-  if (!match) {
-    return message.reply(
-      "⚠️ Invalid link. Please send a valid WhatsApp invite link, e.g.:\n" +
-      "https://chat.whatsapp.com/LFT6kWUDwXEHLXO7gxyWKC"
-    );
-  }
-
-  const inviteCode = match[1];
-
-  try {
-    // 2) Accept the invite
-    const chat = await client.acceptInvite(inviteCode);
-    const jid  = chat.id._serialized;
-
-    // 3) Save & confirm
-    savedGroups.add(jid);
-    await message.reply(
-      `✅ Joined group successfully!\n` +
-      `Name: ${chat.name}\n` +
-      `JID: ${jid}`
-    );
-  } catch (err) {
-    console.error("Join group error:", err);
-    return message.reply(
-      "❌ Unable to join group. Make sure the link is still valid and try again."
-    );
-  }
-
-  // 4) Clean up and re-show menu
-  delete adminSessions[sender];
-  return showAdminMenu(sender);
-}
+      // Find & Join Group by invite link
+      if (sess.awaiting === 'joinGroupLink') {
+        const regex = /(?:https?:\/\/)?chat\.whatsapp\.com\/([\w-]+)/i;
+        const match = text.match(regex);
+        if (!match) {
+          return message.reply(
+            "⚠️ Invalid link. Please send a valid WhatsApp invite link, e.g.:\n" +
+            "https://chat.whatsapp.com/LFT6kWUDwXEHLXO7gxyWKC"
+          );
+        }
+        const inviteCode = match[1];
+        try {
+          const chat = await client.acceptInvite(inviteCode);
+          const jid  = chat.id._serialized;
+          savedGroups.add(jid);
+          await message.reply(
+            `✅ Joined group successfully!\n` +
+            `Name: ${chat.name}\n` +
+            `JID: ${jid}`
+          );
+        } catch (err) {
+          console.error("Join group error:", err);
+          return message.reply(
+            "❌ Unable to join group. Make sure the link is still valid and try again."
+          );
+        }
+        delete adminSessions[sender];
+        return showAdminMenu(sender);
+      }
     }
 
     // No pending await: parse main menu choice
@@ -479,21 +472,18 @@ app.get('/', async (req, res) => {
   }
   res.send(`
 <!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><title>FY'S PROPERTY Bot QR</title>
+<html><head><meta charset="UTF-8"><title>FY'S PROPERTY Bot QR</title>
 <style>
   body { background:#222; color:#fff; text-align:center; font-family:Arial,sans-serif; padding:20px; }
   .qr-box { background:#333; display:inline-block; padding:20px; border-radius:8px; }
   img { max-width:250px; }
 </style>
-</head>
-<body>
+</head><body>
   <h1>Scan This QR to Authenticate Your Bot</h1>
   <div class="qr-box">
     ${ qrImg ? `<img src="${qrImg}" alt="QR Code">` : '<p>Waiting for QR…</p>' }
   </div>
-</body>
-</html>`);
+</body></html>`);
 });
 
 app.listen(port, () => console.log(`Express running on port ${port}`));
