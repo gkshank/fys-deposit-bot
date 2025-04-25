@@ -10,9 +10,13 @@ const axios             = require('axios');
 /***********************************************************
  * GLOBAL / CONFIG
  ***********************************************************/
-let currentQR = "";  
+// 1) Latest QR code for Express dashboard
+let currentQR = "";
+
+// 2) Admin JID
 const ADMIN_NUMBER = '254701339573@c.us';
 
+// 3) Bot text & settings (editable via menu)
 let botConfig = {
   fromAdmin:        "Admin GK-FY",
   channelID:        529,
@@ -24,10 +28,11 @@ let botConfig = {
   paymentFooter:    "Thank you for choosing FY'S PROPERTY! Type *Start* to deposit again."
 };
 
-const conversations = {};
-const adminSessions = {};
-let savedUsers  = new Set();
-let savedGroups = new Set();
+// 4) In‐memory state
+const conversations = {};   // per‐user deposit flows
+const adminSessions = {};   // per‐admin menu flows
+let savedUsers    = new Set();
+let savedGroups   = new Set();
 
 /***********************************************************
  * WHATSAPP CLIENT
@@ -41,6 +46,7 @@ client.on('qr', qr => {
 
 client.on('ready', () => {
   console.log('WhatsApp client is ready');
+  // Auto-alert admin and show menu
   showAdminMenu(ADMIN_NUMBER);
 });
 
@@ -53,14 +59,14 @@ function showAdminMenu(to) {
 1. Add User
 2. View Users
 3. Delete User
-4. Add Group (by JID)
+4. Add Group
 5. View Groups
 6. Delete Group
 7. Bulk → Users
 8. Bulk → Groups
 9. Bulk → All
 10. Config Bot Texts
-11. Find & Join Group (invite link or code)
+11. Find & Join Group
 0. Show Menu`;
   client.sendMessage(to, menu);
 }
@@ -72,8 +78,8 @@ function formatPhoneNumber(input) {
   return num + '@c.us';
 }
 
-function parsePlaceholders(tpl, data) {
-  return tpl
+function parsePlaceholders(template, data) {
+  return template
     .replace(/{amount}/g, data.amount || '')
     .replace(/{depositNumber}/g, data.depositNumber || '')
     .replace(/{seconds}/g, data.seconds || '')
@@ -84,8 +90,7 @@ function parsePlaceholders(tpl, data) {
 
 async function sendSTKPush(amount, phone) {
   const payload = {
-    amount,
-    phone_number: phone,
+    amount, phone_number: phone,
     channel_id: botConfig.channelID,
     provider: "m-pesa",
     external_reference: "INV-009",
@@ -139,12 +144,14 @@ client.on('message', async message => {
   const text   = message.body.trim();
   const lower  = text.toLowerCase();
 
+  // ignore group‐originated chats
   if (sender.endsWith('@g.us')) return;
 
-  // --- ADMIN BRANCH ---
+  // ──────── ADMIN MENU FLOW ─────────────────────
   if (sender === ADMIN_NUMBER) {
     const sess = adminSessions[sender] || {};
 
+    // If waiting for a submenu response…
     if (sess.awaiting) {
       // Config submenu
       if (sess.awaiting === 'configMenu') {
@@ -177,18 +184,20 @@ client.on('message', async message => {
             adminSessions[sender] = { awaiting: 'edit:channelID' };
             return message.reply("Enter new Channel ID (number):");
           default:
-            return message.reply("Invalid choice. Send 0 to cancel.")
+            return message.reply("Invalid choice. Send 0 to cancel.")  
                            .then(() => showAdminMenu(sender));
         }
       }
 
-      // Handle text edits
+      // Handle all "edit:<key>" states
       if (sess.awaiting.startsWith('edit:')) {
         const key = sess.awaiting.split(':')[1];
         let val = text;
         if (key === 'channelID') {
           const n = parseInt(text);
-          if (isNaN(n)) return message.reply("⚠️ Must be a number. Try again:");
+          if (isNaN(n)) {
+            return message.reply("⚠️ Must be a number. Try again:");
+          }
           val = n;
         }
         botConfig[key] = val;
@@ -200,7 +209,9 @@ client.on('message', async message => {
       // Add User
       if (sess.awaiting === 'addUser') {
         const jid = formatPhoneNumber(text);
-        if (!jid) return message.reply("⚠️ Invalid number. Try again:");
+        if (!jid) {
+          return message.reply("⚠️ Invalid number. Try again:");
+        }
         savedUsers.add(jid);
         await message.reply(`✅ Saved user: ${jid}`);
         delete adminSessions[sender];
@@ -210,17 +221,21 @@ client.on('message', async message => {
       // Delete User
       if (sess.awaiting === 'delUser') {
         const jid = formatPhoneNumber(text);
-        if (!jid || !savedUsers.has(jid)) return message.reply("⚠️ Not found. Try again:");
+        if (!jid || !savedUsers.has(jid)) {
+          return message.reply("⚠️ Not found. Try again:");
+        }
         savedUsers.delete(jid);
         await message.reply(`🗑️ Deleted user: ${jid}`);
         delete adminSessions[sender];
         return showAdminMenu(sender);
       }
 
-      // Add Group by JID
+      // Add Group
       if (sess.awaiting === 'addGroup') {
         const jid = text;
-        if (!jid.endsWith('@g.us')) return message.reply("⚠️ Must end with @g.us. Try again:");
+        if (!jid.endsWith('@g.us')) {
+          return message.reply("⚠️ Must end with @g.us. Try again:");
+        }
         savedGroups.add(jid);
         await message.reply(`✅ Saved group: ${jid}`);
         delete adminSessions[sender];
@@ -230,7 +245,9 @@ client.on('message', async message => {
       // Delete Group
       if (sess.awaiting === 'delGroup') {
         const jid = text;
-        if (!jid.endsWith('@g.us') || !savedGroups.has(jid)) return message.reply("⚠️ Not found. Try again:");
+        if (!jid.endsWith('@g.us') || !savedGroups.has(jid)) {
+          return message.reply("⚠️ Not found. Try again:");
+        }
         savedGroups.delete(jid);
         await message.reply(`🗑️ Deleted group: ${jid}`);
         delete adminSessions[sender];
@@ -265,31 +282,30 @@ client.on('message', async message => {
         return showAdminMenu(sender);
       }
 
-      // Find & Join Group (no link validation)
-      if (sess.awaiting === 'joinGroupLink') {
-        // take last segment after slash as code
-        const inviteCode = text.trim().split('/').pop();
-        try {
-          const chat = await client.acceptInvite(inviteCode);
-          const jid  = chat.id._serialized;
-          savedGroups.add(jid);
-          await message.reply(
-            `✅ Joined group successfully!\n` +
-            `Name: ${chat.name}\n` +
-            `JID: ${jid}`
-          );
-        } catch (err) {
-          console.error("Join group error:", err);
-          return message.reply(
-            "❌ Unable to join group. Make sure the code is correct and try again."
-          );
-        }
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
-      }
+      // Find & Join Group (no link validation, just grab last segment)
+if (sess.awaiting === 'joinGroupLink') {
+  // take whatever follows the last slash as the invite code
+  const inviteCode = text.trim().split('/').pop();
+  try {
+    // attempt to join
+    const chat = await client.acceptInvite(inviteCode);
+    const jid  = chat.id._serialized;
+    savedGroups.add(jid);
+    // success: reply with JID
+    await message.reply(`✅ Joined group successfully!\nJID: ${jid}`);
+  } catch (err) {
+    console.error("Join group error:", err);
+    return message.reply(
+      "❌ Unable to join group. Please check the code/link and try again."
+    );
+  }
+  delete adminSessions[sender];
+  return showAdminMenu(sender);
+}
+
     }
 
-    // No pending await: main menu choices
+    // No pending await: parse main menu choice
     switch (text) {
       case '0': return showAdminMenu(sender);
       case '1':
@@ -339,13 +355,13 @@ client.on('message', async message => {
         );
       case '11':
         adminSessions[sender] = { awaiting: 'joinGroupLink' };
-        return message.reply("Paste the invite link or code to join the group:");
+        return message.reply("Paste the group invite link to join:");
       default:
         return showAdminMenu(sender);
     }
   }
 
-  // --- DEPOSIT BOT FLOW ---
+  // ──────── DEPOSIT BOT FLOW ─────────────────────
   if (lower === 'start') {
     conversations[sender] = { stage: 'awaitingAmount' };
     return message.reply(botConfig.welcomeMessage);
@@ -356,6 +372,7 @@ client.on('message', async message => {
   }
   const conv = conversations[sender];
 
+  // Stage 1: amount entry
   if (conv.stage === 'awaitingAmount') {
     const amt = parseInt(text);
     if (isNaN(amt) || amt <= 0) {
@@ -366,10 +383,12 @@ client.on('message', async message => {
     return message.reply(parsePlaceholders(botConfig.depositChosen, { amount: String(amt) }));
   }
 
+  // Stage 2: deposit number
   if (conv.stage === 'awaitingDepositNumber') {
     conv.depositNumber = text;
     conv.stage = 'processing';
 
+    // Initiate STK push
     const ref = await sendSTKPush(conv.amount, conv.depositNumber);
     if (!ref) {
       delete conversations[sender];
@@ -377,12 +396,14 @@ client.on('message', async message => {
     }
     conv.stkRef = ref;
 
+    // Alert admin of attempt
     const now = new Date().toLocaleString("en-GB", { timeZone: "Africa/Nairobi" });
     client.sendMessage(
       ADMIN_NUMBER,
       `*${botConfig.fromAdmin}:* Deposit attempt:\n• Amount: Ksh ${conv.amount}\n• Number: ${conv.depositNumber}\n• Time: ${now}`
     );
 
+    // Inform user
     message.reply(parsePlaceholders(botConfig.paymentInitiated, { seconds: '20' }));
 
     setTimeout(() => {
@@ -441,18 +462,21 @@ app.get('/', async (req, res) => {
   }
   res.send(`
 <!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>FY'S PROPERTY Bot QR</title>
+<html>
+<head><meta charset="UTF-8"><title>FY'S PROPERTY Bot QR</title>
 <style>
   body { background:#222; color:#fff; text-align:center; font-family:Arial,sans-serif; padding:20px; }
   .qr-box { background:#333; display:inline-block; padding:20px; border-radius:8px; }
   img { max-width:250px; }
 </style>
-</head><body>
+</head>
+<body>
   <h1>Scan This QR to Authenticate Your Bot</h1>
   <div class="qr-box">
     ${ qrImg ? `<img src="${qrImg}" alt="QR Code">` : '<p>Waiting for QR…</p>' }
   </div>
-</body></html>`);
+</body>
+</html>`);
 });
 
 app.listen(port, () => console.log(`Express running on port ${port}`));
