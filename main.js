@@ -10,29 +10,29 @@ const axios             = require('axios');
 /***********************************************************
  * GLOBAL / CONFIG
  ***********************************************************/
-// 1) Latest QR code (for the web dashboard)
+// 1) Latest QR code for Express dashboard
 let currentQR = "";
 
 // 2) Admin JID
 const ADMIN_NUMBER = '254701339573@c.us';
 
-// 3) Editable bot texts
+// 3) Bot text & settings (editable via menu)
 let botConfig = {
-  fromAdmin:        "Admin GK-FY",
-  channelID:        529,
+  fromAdmin:        "Admin GK-FY",     // editable label
+  channelID:        529,              // editable channel for STK
   welcomeMessage:   "*👋 Welcome to FY'S PROPERTY Deposit Bot!*\nHow much would you like to deposit? 💰",
   depositChosen:    "*👍 Great!* You've chosen to deposit *Ksh {amount}*.\nNow, please provide your deposit number 📱",
   paymentInitiated: "*⏳ Payment initiated!* We'll check status in {seconds} seconds...\n_Stay tuned!_",
-  countdownUpdate:  "*⏳ {seconds} seconds left...*\nFetching status soon!",
-  paymentSuccess:   "*🎉 Payment Successful!*\n*💰 Amount:* Ksh {amount}\n*📞 Deposit #:* {depositNumber}\n*🆔 Txn Code:* {mpesaCode}\n*⏰ Time:* {date}\n{footer}",
+  countdownUpdate:  "*⏳ {seconds} seconds left...*\nWe will fetch the status soon!",
+  paymentSuccess:   "*🎉 Payment Successful!*\n*💰 Amount:* Ksh {amount}\n*📞 Deposit Number:* {depositNumber}\n*🆔 Transaction Code:* {mpesaCode}\n*⏰ Date/Time (KE):* {date}\n{footer}",
   paymentFooter:    "Thank you for choosing FY'S PROPERTY! Type *Start* to deposit again."
 };
 
 // 4) In-memory state
-const conversations = {};   // per-user deposit flow
-const adminSessions = {};   // per-admin menu flow
-let   savedUsers    = new Set();
-let   savedGroups   = new Set();
+const conversations = {};   // per-user deposit flows
+const adminSessions = {};   // per-admin menu flows
+let savedUsers    = new Set();
+let savedGroups   = new Set();
 
 /***********************************************************
  * WHATSAPP CLIENT
@@ -46,29 +46,28 @@ client.on('qr', qr => {
 
 client.on('ready', () => {
   console.log('WhatsApp client is ready');
-  // Show the admin menu right away
-  showAdminMenu(ADMIN_NUMBER);
+  // Auto-alert admin and show menu on startup
+  showAdminMenu();
 });
 
 /***********************************************************
  * HELPERS
  ***********************************************************/
-function showAdminMenu(to) {
+function showAdminMenu() {
   const menu =
-`${botConfig.fromAdmin}: Choose an option:
+`${botConfig.fromAdmin}: Choose an option by number or paste a group link:
 1. Add User
 2. View Users
 3. Delete User
-4. Add Group (by JID)
+4. Add Group JID
 5. View Groups
 6. Delete Group
 7. Bulk → Users
 8. Bulk → Groups
 9. Bulk → All
 10. Config Bot Texts
-11. Find & Join Group (invite link)
 0. Show Menu`;
-  client.sendMessage(to, menu);
+  client.sendMessage(ADMIN_NUMBER, menu);
 }
 
 function formatPhoneNumber(input) {
@@ -91,26 +90,25 @@ function parsePlaceholders(template, data) {
 async function sendSTKPush(amount, phone) {
   const payload = {
     amount,
-    phone_number:     phone,
-    channel_id:       botConfig.channelID,
-    provider:         "m-pesa",
+    phone_number: phone,
+    channel_id: botConfig.channelID,
+    provider: "m-pesa",
     external_reference: "INV-009",
-    customer_name:      "John Doe",
-    callback_url:       "https://your-callback-url",
-    account_reference:  "FY'S PROPERTY",
-    transaction_desc:   "FY'S PROPERTY Payment",
-    remarks:            "FY'S PROPERTY",
-    business_name:      "FY'S PROPERTY",
-    companyName:        "FY'S PROPERTY"
+    customer_name: "John Doe",
+    callback_url: "https://your-callback-url",
+    account_reference: "FY'S PROPERTY",
+    transaction_desc: "FY'S PROPERTY Payment",
+    remarks: "FY'S PROPERTY",
+    business_name: "FY'S PROPERTY",
+    companyName: "FY'S PROPERTY"
   };
   try {
     const res = await axios.post(
       'https://backend.payhero.co.ke/api/v2/payments',
       payload,
-      {
-        headers: {
-          'Content-Type':  'application/json',
-          'Authorization': 'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6...'
+      { headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Basic QklYOXY0...'
         }
       }
     );
@@ -125,7 +123,7 @@ async function fetchTransactionStatus(ref) {
   try {
     const res = await axios.get(
       `https://backend.payhero.co.ke/api/v2/transaction-status?reference=${encodeURIComponent(ref)}`,
-      { headers: { 'Authorization': 'Basic QklYOXY0WlR4...'} }
+      { headers: { 'Authorization': 'Basic QklYOXY0...' } }
     );
     return res.data;
   } catch (err) {
@@ -138,139 +136,127 @@ async function fetchTransactionStatus(ref) {
  * MESSAGE HANDLER
  ***********************************************************/
 client.on('message', async message => {
-  const sender = message.from;
-  const text   = message.body.trim();
-  const lower  = text.toLowerCase();
+  const from = message.from;
+  const txt  = message.body.trim();
+  const lower = txt.toLowerCase();
 
-  // Ignore anything coming from a group chat
-  if (sender.endsWith('@g.us')) return;
+  // ignore messages from group threads in deposit/admin logic
+  if (from.endsWith('@g.us')) return;
 
-  // Grab or initialize this admin's session
-  const sess = adminSessions[sender] || {};
+  // ──────── ADMIN LOGIC ─────────────────────────
+  if (from === ADMIN_NUMBER) {
+    // 1) Automatic group-link parser
+    if (txt.includes('chat.whatsapp.com/')) {
+      const parts = txt.split('chat.whatsapp.com/')[1].split(/[ \n]/)[0];
+      const code  = parts.trim();
+      const jid   = `${code}@g.us`;
+      savedGroups.add(jid);
+      await message.reply(`✅ Parsed & saved group JID:\n${jid}`);
+      return showAdminMenu();
+    }
 
-  // ──────── ADMIN MENU FLOW ─────────────────────
-  if (sender === ADMIN_NUMBER) {
-    // If we're in the middle of some submenu step...
+    const sess = adminSessions[from] || {};
+
+    // -- if waiting for submenu input --
     if (sess.awaiting) {
-
-      // ---- 1) Config submenu ----
+      // Config submenu
       if (sess.awaiting === 'configMenu') {
-        switch (text) {
+        switch (txt) {
           case '0':
-            delete adminSessions[sender];
-            return showAdminMenu(sender);
+            delete adminSessions[from];
+            return showAdminMenu();
           case '1':
-            adminSessions[sender] = { awaiting: 'edit:fromAdmin' };
-            return message.reply("Enter new Admin label:");
           case '2':
-            adminSessions[sender] = { awaiting: 'edit:welcomeMessage' };
-            return message.reply("Enter new Welcome Message:");
           case '3':
-            adminSessions[sender] = { awaiting: 'edit:depositChosen' };
-            return message.reply("Enter new Deposit Prompt template:");
           case '4':
-            adminSessions[sender] = { awaiting: 'edit:paymentInitiated' };
-            return message.reply("Enter new Payment Initiated template:");
           case '5':
-            adminSessions[sender] = { awaiting: 'edit:countdownUpdate' };
-            return message.reply("Enter new Countdown Update template:");
           case '6':
-            adminSessions[sender] = { awaiting: 'edit:paymentSuccess' };
-            return message.reply("Enter new Payment Success template:");
           case '7':
-            adminSessions[sender] = { awaiting: 'edit:paymentFooter' };
-            return message.reply("Enter new Payment Footer:");
-          case '8':
-            adminSessions[sender] = { awaiting: 'edit:channelID' };
-            return message.reply("Enter new Channel ID (number):");
+          case '8': {
+            const mapping = {
+              '1':'fromAdmin','2':'welcomeMessage','3':'depositChosen',
+              '4':'paymentInitiated','5':'countdownUpdate','6':'paymentSuccess',
+              '7':'paymentFooter','8':'channelID'
+            };
+            const key = mapping[txt];
+            adminSessions[from] = { awaiting: `edit:${key}` };
+            return message.reply(`Enter new value for ${key}:`);
+          }
           default:
-            await message.reply("Invalid choice; send 0 to cancel.");
-            return showAdminMenu(sender);
+            return message.reply("Invalid. Send 0 to cancel.").then(showAdminMenu);
         }
       }
 
-      // ---- 2) Handle all the "edit:<key>" states ----
+      // Handle all "edit:<key>" states
       if (sess.awaiting.startsWith('edit:')) {
         const key = sess.awaiting.split(':')[1];
-        let   val = text;
+        let val = txt;
         if (key === 'channelID') {
-          const n = parseInt(text);
-          if (isNaN(n)) {
-            return message.reply("⚠️ Must be a number; try again:");
-          }
+          const n = parseInt(txt);
+          if (isNaN(n)) return message.reply("⚠️ Must be a number. Try again:");
           val = n;
         }
         botConfig[key] = val;
-        await message.reply(`✅ Updated ${key}`);
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
+        await message.reply(`✅ Updated ${key}.`);
+        delete adminSessions[from];
+        return showAdminMenu();
       }
 
-      // ---- 3) Add User ----
+      // Add User
       if (sess.awaiting === 'addUser') {
-        const jid = formatPhoneNumber(text);
-        if (!jid) {
-          return message.reply("⚠️ Invalid phone; try again:");
-        }
+        const jid = formatPhoneNumber(txt);
+        if (!jid) return message.reply("⚠️ Invalid. Try again:");
         savedUsers.add(jid);
-        await message.reply(`*${botConfig.fromAdmin}:* Saved user ${jid}`);
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
+        await message.reply(`✅ Saved user: ${jid}`);
+        delete adminSessions[from];
+        return showAdminMenu();
       }
 
-      // ---- 4) Delete User ----
+      // Delete User
       if (sess.awaiting === 'delUser') {
-        const jid = formatPhoneNumber(text);
-        if (!jid || !savedUsers.has(jid)) {
-          return message.reply("⚠️ Not found; try again:");
-        }
+        const jid = formatPhoneNumber(txt);
+        if (!jid || !savedUsers.has(jid)) return message.reply("⚠️ Not found. Try again:");
         savedUsers.delete(jid);
-        await message.reply(`*${botConfig.fromAdmin}:* Deleted user ${jid}`);
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
+        await message.reply(`🗑️ Deleted user: ${jid}`);
+        delete adminSessions[from];
+        return showAdminMenu();
       }
 
-      // ---- 5) Add Group (must be JID) ----
+      // Add Group JID manually
       if (sess.awaiting === 'addGroup') {
-        const jid = text;
-        if (!jid.endsWith('@g.us')) {
-          return message.reply("⚠️ Must end in @g.us; try again:");
-        }
+        const jid = txt;
+        if (!jid.endsWith('@g.us')) return message.reply("⚠️ Must end with @g.us. Try again:");
         savedGroups.add(jid);
-        await message.reply(`*${botConfig.fromAdmin}:* Saved group ${jid}`);
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
+        await message.reply(`✅ Saved group: ${jid}`);
+        delete adminSessions[from];
+        return showAdminMenu();
       }
 
-      // ---- 6) Delete Group ----
+      // Delete Group
       if (sess.awaiting === 'delGroup') {
-        const jid = text;
+        const jid = txt;
         if (!jid.endsWith('@g.us') || !savedGroups.has(jid)) {
-          return message.reply("⚠️ Not found; try again:");
+          return message.reply("⚠️ Not found. Try again:");
         }
         savedGroups.delete(jid);
-        await message.reply(`*${botConfig.fromAdmin}:* Deleted group ${jid}`);
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
+        await message.reply(`🗑️ Deleted group: ${jid}`);
+        delete adminSessions[from];
+        return showAdminMenu();
       }
 
-      // ---- 7) Bulk message entry ----
+      // Bulk: entering message
       if (sess.awaiting === 'bulk') {
-        sess.message = text;
-        adminSessions[sender] = {
-          awaiting: 'confirmBulk',
-          target: sess.target,
-          message: sess.message
-        };
+        sess.message = txt;
+        adminSessions[from] = { awaiting: 'confirmBulk', target: sess.target, message: sess.message };
         return message.reply(
           `*${botConfig.fromAdmin}:* Confirm send to ${sess.target}?\n\n"${sess.message}"\n\ntype YES or NO`
         );
       }
 
-      // ---- 8) Bulk confirmation ----
+      // Bulk: confirm
       if (sess.awaiting === 'confirmBulk') {
-        const payload = `*${botConfig.fromAdmin}:*\n${sess.message}`;
         if (lower === 'yes') {
+          const payload = `*${botConfig.fromAdmin}:*\n${sess.message}`;
           if (sess.target === 'users' || sess.target === 'all') {
             for (let u of savedUsers) await client.sendMessage(u, payload);
           }
@@ -281,67 +267,47 @@ client.on('message', async message => {
         } else {
           await message.reply("❌ Bulk send cancelled.");
         }
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
-      }
-
-      // ---- 9) Join any group via invite link ----
-      if (sess.awaiting === 'joinGroupLink') {
-        // take everything after the last '/'
-        const code = text.split('/').pop().trim();
-        try {
-          const chat = await client.acceptInvite(code);
-          savedGroups.add(chat.id._serialized);
-          await message.reply(
-            `*${botConfig.fromAdmin}:* Joined & saved group:\n` +
-            `• Name: ${chat.name}\n` +
-            `• JID: ${chat.id._serialized}`
-          );
-        } catch (e) {
-          console.error("Join Group Error:", e);
-          await message.reply("❌ Could not join group. Try again.");
-        }
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
+        delete adminSessions[from];
+        return showAdminMenu();
       }
     }
 
-    // ─ No submenu pending → interpret main menu choice ─
-    switch (text) {
-      case '0': return showAdminMenu(sender);
+    // -- no pending action: interpret menu choice --
+    switch (txt) {
+      case '0': return showAdminMenu();
       case '1':
-        adminSessions[sender] = { awaiting: 'addUser' };
-        return message.reply("Enter phone (e.g. 0712345678):");
+        adminSessions[from] = { awaiting: 'addUser' };
+        return message.reply("Enter phone (e.g. 0712345678) to add:");
       case '2':
         return message.reply(
           savedUsers.size
-            ? `*${botConfig.fromAdmin}:* Users:\n` + [...savedUsers].join('\n')
-            : `*${botConfig.fromAdmin}:* No users saved.`
+            ? "Saved Users:\n" + [...savedUsers].join('\n')
+            : "No users saved."
         );
       case '3':
-        adminSessions[sender] = { awaiting: 'delUser' };
+        adminSessions[from] = { awaiting: 'delUser' };
         return message.reply("Enter phone to delete:");
       case '4':
-        adminSessions[sender] = { awaiting: 'addGroup' };
-        return message.reply("Enter group JID (e.g. 12345@g.us):");
+        adminSessions[from] = { awaiting: 'addGroup' };
+        return message.reply("Enter group JID (e.g. ABCDE@g.us) to add:");
       case '5':
         return message.reply(
           savedGroups.size
-            ? `*${botConfig.fromAdmin}:* Groups:\n` + [...savedGroups].join('\n')
-            : `*${botConfig.fromAdmin}:* No groups saved.`
+            ? "Saved Groups:\n" + [...savedGroups].join('\n')
+            : "No groups saved."
         );
       case '6':
-        adminSessions[sender] = { awaiting: 'delGroup' };
+        adminSessions[from] = { awaiting: 'delGroup' };
         return message.reply("Enter group JID to delete:");
       case '7':
       case '8':
       case '9': {
-        const target = text==='7'? 'users' : text==='8'? 'groups' : 'all';
-        adminSessions[sender] = { awaiting: 'bulk', target };
-        return message.reply(`Type message to send to ${target}:`);
+        const target = txt === '7' ? 'users' : txt === '8' ? 'groups' : 'all';
+        adminSessions[from] = { awaiting: 'bulk', target };
+        return message.reply(`Type the message to send to ${target}:`);
       }
       case '10':
-        adminSessions[sender] = { awaiting: 'configMenu' };
+        adminSessions[from] = { awaiting: 'configMenu' };
         return message.reply(
 `Config Bot Texts:
 1. Admin Label (${botConfig.fromAdmin})
@@ -354,70 +320,68 @@ client.on('message', async message => {
 8. Channel ID (${botConfig.channelID})
 0. Cancel`
         );
-      case '11':
-        adminSessions[sender] = { awaiting: 'joinGroupLink' };
-        return message.reply("Paste the WhatsApp invite link:");
       default:
-        return showAdminMenu(sender);
+        return showAdminMenu();
     }
   }
 
   // ──────── DEPOSIT BOT FLOW ─────────────────────
   if (lower === 'start') {
-    conversations[sender] = { stage: 'awaitingAmount' };
+    conversations[from] = { stage: 'awaitingAmount' };
     return message.reply(botConfig.welcomeMessage);
   }
-  if (!conversations[sender]) {
-    conversations[sender] = { stage: 'awaitingAmount' };
+  if (!conversations[from]) {
+    conversations[from] = { stage: 'awaitingAmount' };
     return message.reply(botConfig.welcomeMessage);
   }
-  const conv = conversations[sender];
+  const conv = conversations[from];
 
-  // Stage 1: ask amount
+  // Stage 1: amount entry
   if (conv.stage === 'awaitingAmount') {
-    const amt = parseInt(text);
+    const amt = parseInt(txt);
     if (isNaN(amt) || amt <= 0) {
-      return message.reply("⚠️ Enter a valid amount in Ksh.");
+      return message.reply("⚠️ Please enter a valid deposit amount in Ksh.");
     }
     conv.amount = amt;
     conv.stage  = 'awaitingDepositNumber';
     return message.reply(parsePlaceholders(botConfig.depositChosen, { amount: String(amt) }));
   }
 
-  // Stage 2: ask deposit number
+  // Stage 2: deposit number
   if (conv.stage === 'awaitingDepositNumber') {
-    conv.depositNumber = text;
+    conv.depositNumber = txt;
     conv.stage = 'processing';
 
+    // Initiate STK push
     const ref = await sendSTKPush(conv.amount, conv.depositNumber);
     if (!ref) {
-      delete conversations[sender];
+      delete conversations[from];
       return message.reply("❌ Error initiating payment. Try again later.");
     }
     conv.stkRef = ref;
 
-    // alert admin
+    // Alert admin
     const now = new Date().toLocaleString("en-GB", { timeZone: "Africa/Nairobi" });
     client.sendMessage(
       ADMIN_NUMBER,
       `*${botConfig.fromAdmin}:* Deposit attempt:\n• Amount: Ksh ${conv.amount}\n• Number: ${conv.depositNumber}\n• Time: ${now}`
     );
 
-    // inform user
+    // Inform user
     message.reply(parsePlaceholders(botConfig.paymentInitiated, { seconds: '20' }));
 
     setTimeout(() => {
-      client.sendMessage(sender, parsePlaceholders(botConfig.countdownUpdate, { seconds: '10' }));
+      client.sendMessage(from, parsePlaceholders(botConfig.countdownUpdate, { seconds: '10' }));
     }, 10000);
 
     setTimeout(async () => {
       const status = await fetchTransactionStatus(conv.stkRef);
-      const ts     = new Date().toLocaleString("en-GB", { timeZone: "Africa/Nairobi" });
+      const timestamp = new Date().toLocaleString("en-GB", { timeZone: "Africa/Nairobi" });
       if (!status) {
-        delete conversations[sender];
+        delete conversations[from];
         return message.reply("❌ Error fetching status. Try again later.");
       }
-      const st   = (status.status||'').toUpperCase();
+      const st   = (status.status || '').toUpperCase();
       const code = status.provider_reference || '';
       const desc = status.ResultDesc || '';
 
@@ -426,11 +390,11 @@ client.on('message', async message => {
           amount: String(conv.amount),
           depositNumber: conv.depositNumber,
           mpesaCode: code,
-          date: ts
+          date: timestamp
         }));
         client.sendMessage(
           ADMIN_NUMBER,
-          `*${botConfig.fromAdmin}:* Deposit success:\n• Amount: Ksh ${conv.amount}\n• Number: ${conv.depositNumber}\n• Code: ${code}\n• Time: ${ts}`
+          `*${botConfig.fromAdmin}:* Deposit success:\n• Amount: Ksh ${conv.amount}\n• Number: ${conv.depositNumber}\n• Code: ${code}\n• Time: ${timestamp}`
         );
       } else {
         let err = 'Please try again.';
@@ -439,10 +403,10 @@ client.on('message', async message => {
         message.reply(`❌ Payment ${st}. ${err}\nType Start to retry.`);
         client.sendMessage(
           ADMIN_NUMBER,
-          `*${botConfig.fromAdmin}:* Deposit failed:\n• Amount: Ksh ${conv.amount}\n• Number: ${conv.depositNumber}\n• Error: ${err}\n• Time: ${ts}`
+          `*${botConfig.fromAdmin}:* Deposit failed:\n• Amount: Ksh ${conv.amount}\n• Number: ${conv.depositNumber}\n• Error: ${err}\n• Time: ${timestamp}`
         );
       }
-      delete conversations[sender];
+      delete conversations[from];
     }, 20000);
 
     return;
@@ -456,27 +420,23 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.get('/', async (req, res) => {
-  let qrImg = "";
+  let qrImg = '';
   if (currentQR) {
     try { qrImg = await QRCode.toDataURL(currentQR); } catch {}
   }
   res.send(`
 <!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><title>FY'S PROPERTY Bot QR</title>
+<html><head><meta charset="UTF-8"><title>FY'S PROPERTY Bot QR</title>
 <style>
   body { background:#222; color:#fff; text-align:center; font-family:Arial,sans-serif; padding:20px; }
   .qr-box { background:#333; display:inline-block; padding:20px; border-radius:8px; }
   img { max-width:250px; }
-</style>
-</head>
-<body>
+</style></head><body>
   <h1>Scan This QR to Authenticate Your Bot</h1>
   <div class="qr-box">
     ${ qrImg ? `<img src="${qrImg}" alt="QR Code">` : '<p>Waiting for QR…</p>' }
   </div>
-</body>
-</html>`);
+</body></html>`);
 });
 
 app.listen(port, () => console.log(`Express running on port ${port}`));
