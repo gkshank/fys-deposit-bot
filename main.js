@@ -284,25 +284,41 @@ client.on('message', async message => {
 
       // Find & Join Group by link
 if (sess.awaiting === 'joinGroupLink') {
-  // Match chat.whatsapp.com/<inviteCode>
-  const match = text.match(/(?:https?:\/\/)?chat\.whatsapp\.com\/([A-Za-z0-9]+)/);
-  if (!match) {
-    return message.reply("⚠️ Invalid invite link. Please send a valid chat.whatsapp.com/… link:");
-  }
-  const inviteCode = match[1];
-  try {
-    // Attempt to join
-    const chat = await client.acceptInvite(inviteCode);
-    const jid  = chat.id._serialized;
-    savedGroups.add(jid);
-    // Success: show JID
-    await message.reply(`✅ Joined group successfully!\nJID: ${jid}`);
-  } catch (err) {
-    console.error("Join group error:", err);
-    return message.reply("❌ Unable to join group. Please check the link and try again.");
-  }
-  delete adminSessions[sender];
-  return showAdminMenu(sender);
+  // 1) Try to pull the invite code via regex
+  const regex = /(?:https?:\/\/)?chat\.whatsapp\.com\/([\w-]+)/i;
+  const match = text.trim().match(regex);
+
+  if (!match) {
+    return message.reply(
+      "⚠️ Invalid link. Please send a valid WhatsApp invite link, e.g.:\n" +
+      "https://chat.whatsapp.com/LFT6kWUDwXEHLXO7gxyWKC"
+    );
+  }
+
+  const inviteCode = match[1];
+
+  try {
+    // 2) Accept the invite
+    const chat = await client.acceptInvite(inviteCode);
+    const jid  = chat.id._serialized;
+
+    // 3) Save & confirm
+    savedGroups.add(jid);
+    await message.reply(
+      `✅ Joined group successfully!\n` +
+      `Name: ${chat.name}\n` +
+      `JID: ${jid}`
+    );
+  } catch (err) {
+    console.error("Join group error:", err);
+    return message.reply(
+      "❌ Unable to join group. Make sure the link is still valid and try again."
+    );
+  }
+
+  // 4) Clean up and re-show menu
+  delete adminSessions[sender];
+  return showAdminMenu(sender);
 }
     }
 
