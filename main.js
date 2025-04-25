@@ -46,14 +46,13 @@ client.on('qr', qr => {
 
 client.on('ready', () => {
   console.log('WhatsApp client is ready');
-  // Auto-alert admin and show menu
-  showAdminMenu(ADMIN_NUMBER);
+  showAdminMenu();
 });
 
 /***********************************************************
  * HELPERS
  ***********************************************************/
-function showAdminMenu(to) {
+function showAdminMenu() {
   const menu =
 `${botConfig.fromAdmin}: Please choose an option by number:
 1. Add User
@@ -66,9 +65,9 @@ function showAdminMenu(to) {
 8. Bulk → Groups
 9. Bulk → All
 10. Config Bot Texts
-11. Find & Join Group
+11. Join Group via Invite Link
 0. Show Menu`;
-  client.sendMessage(to, menu);
+  return client.sendMessage(ADMIN_NUMBER, menu);
 }
 
 function formatPhoneNumber(input) {
@@ -90,17 +89,18 @@ function parsePlaceholders(template, data) {
 
 async function sendSTKPush(amount, phone) {
   const payload = {
-    amount, phone_number: phone,
-    channel_id: botConfig.channelID,
-    provider: "m-pesa",
+    amount,
+    phone_number:     phone,
+    channel_id:       botConfig.channelID,
+    provider:         "m-pesa",
     external_reference: "INV-009",
-    customer_name: "John Doe",
-    callback_url: "https://your-callback-url",
-    account_reference: "FY'S PROPERTY",
-    transaction_desc: "FY'S PROPERTY Payment",
-    remarks: "FY'S PROPERTY",
-    business_name: "FY'S PROPERTY",
-    companyName: "FY'S PROPERTY"
+    customer_name:      "John Doe",
+    callback_url:       "https://your-callback-url",
+    account_reference:  "FY'S PROPERTY",
+    transaction_desc:   "FY'S PROPERTY Payment",
+    remarks:            "FY'S PROPERTY",
+    business_name:      "FY'S PROPERTY",
+    companyName:        "FY'S PROPERTY"
   };
   try {
     const res = await axios.post(
@@ -124,7 +124,8 @@ async function fetchTransactionStatus(ref) {
   try {
     const res = await axios.get(
       `https://backend.payhero.co.ke/api/v2/transaction-status?reference=${encodeURIComponent(ref)}`,
-      { headers: {
+      {
+        headers: {
           'Authorization': 'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6c2lYb09taHRYSlFMbWZ0dFdqeGp4SG13NDFTekJLckl2Z2NWd2F1aw=='
         }
       }
@@ -144,8 +145,8 @@ client.on('message', async message => {
   const text   = message.body.trim();
   const lower  = text.toLowerCase();
 
-  // ignore group‐originated chats
-  if (sender.endsWith('@g.us')) return;
+  // ignore group‐originated chats from non‐admin
+  if (sender.endsWith('@g.us') && sender !== ADMIN_NUMBER) return;
 
   // ──────── ADMIN MENU FLOW ─────────────────────
   if (sender === ADMIN_NUMBER) {
@@ -153,12 +154,12 @@ client.on('message', async message => {
 
     // If waiting for a submenu response…
     if (sess.awaiting) {
-      // Config submenu
+      // Handle config submenu
       if (sess.awaiting === 'configMenu') {
         switch (text) {
           case '0':
             delete adminSessions[sender];
-            return showAdminMenu(sender);
+            return showAdminMenu();
           case '1':
             adminSessions[sender] = { awaiting: 'edit:fromAdmin' };
             return message.reply("Enter new Admin label:");
@@ -184,13 +185,13 @@ client.on('message', async message => {
             adminSessions[sender] = { awaiting: 'edit:channelID' };
             return message.reply("Enter new Channel ID (number):");
           default:
-            return message.reply("Invalid choice. Send 0 to cancel.")  
-                           .then(() => showAdminMenu(sender));
+            await message.reply("Invalid choice. Send 0 to go back.");
+            return showAdminMenu();
         }
       }
 
       // Handle all "edit:<key>" states
-      if (sess.awaiting.startsWith('edit:')) {
+      if (sess.awaiting && sess.awaiting.startsWith('edit:')) {
         const key = sess.awaiting.split(':')[1];
         let val = text;
         if (key === 'channelID') {
@@ -203,7 +204,7 @@ client.on('message', async message => {
         botConfig[key] = val;
         await message.reply(`✅ Updated ${key}!`);
         delete adminSessions[sender];
-        return showAdminMenu(sender);
+        return showAdminMenu();
       }
 
       // Add User
@@ -215,43 +216,41 @@ client.on('message', async message => {
         savedUsers.add(jid);
         await message.reply(`✅ Saved user: ${jid}`);
         delete adminSessions[sender];
-        return showAdminMenu(sender);
+        return showAdminMenu();
       }
 
       // Delete User
       if (sess.awaiting === 'delUser') {
         const jid = formatPhoneNumber(text);
         if (!jid || !savedUsers.has(jid)) {
-          return message.reply("⚠️ Not found. Try again:");
+          return message.reply("⚠️ User not found. Try again:");
         }
         savedUsers.delete(jid);
         await message.reply(`🗑️ Deleted user: ${jid}`);
         delete adminSessions[sender];
-        return showAdminMenu(sender);
+        return showAdminMenu();
       }
 
       // Add Group
       if (sess.awaiting === 'addGroup') {
         const jid = text;
-        if (!jid.endsWith('@g.us')) {
-          return message.reply("⚠️ Must end with @g.us. Try again:");
-        }
+        // no validation per request
         savedGroups.add(jid);
         await message.reply(`✅ Saved group: ${jid}`);
         delete adminSessions[sender];
-        return showAdminMenu(sender);
+        return showAdminMenu();
       }
 
       // Delete Group
       if (sess.awaiting === 'delGroup') {
         const jid = text;
-        if (!jid.endsWith('@g.us') || !savedGroups.has(jid)) {
-          return message.reply("⚠️ Not found. Try again:");
+        if (!savedGroups.has(jid)) {
+          return message.reply("⚠️ Group not found. Try again:");
         }
         savedGroups.delete(jid);
         await message.reply(`🗑️ Deleted group: ${jid}`);
         delete adminSessions[sender];
-        return showAdminMenu(sender);
+        return showAdminMenu();
       }
 
       // Bulk message entry
@@ -269,45 +268,41 @@ client.on('message', async message => {
           const { target, message: m } = sess;
           const payload = `*${botConfig.fromAdmin}:*\n${m}`;
           if (target === 'users' || target === 'all') {
-            for (let u of savedUsers) await client.sendMessage(u, payload);
+            for (let u of savedUsers) {
+              await client.sendMessage(u, payload);
+            }
           }
           if (target === 'groups' || target === 'all') {
-            for (let g of savedGroups) await client.sendMessage(g, payload);
+            for (let g of savedGroups) {
+              await client.sendMessage(g, payload);
+            }
           }
           await message.reply("✅ Bulk send complete.");
         } else {
           await message.reply("❌ Bulk send cancelled.");
         }
         delete adminSessions[sender];
-        return showAdminMenu(sender);
+        return showAdminMenu();
       }
 
-      // Find & Join Group (no link validation, just grab last segment)
-if (sess.awaiting === 'joinGroupLink') {
-  // take whatever follows the last slash as the invite code
-  const inviteCode = text.trim().split('/').pop();
-  try {
-    // attempt to join
-    const chat = await client.acceptInvite(inviteCode);
-    const jid  = chat.id._serialized;
-    savedGroups.add(jid);
-    // success: reply with JID
-    await message.reply(`✅ Joined group successfully!\nJID: ${jid}`);
-  } catch (err) {
-    console.error("Join group error:", err);
-    return message.reply(
-      "❌ Unable to join group. Please check the code/link and try again."
-    );
-  }
-  delete adminSessions[sender];
-  return showAdminMenu(sender);
-}
-
+      // Join Group via Invite Link (no validation)
+      if (sess.awaiting === 'joinGroupLink') {
+        const code = text.includes('/') ? text.split('/').pop().trim() : text.trim();
+        try {
+          const chat = await client.acceptInvite(code);
+          savedGroups.add(chat.id._serialized);
+          await message.reply(`*${botConfig.fromAdmin}:* Joined & saved group:\n• ${chat.name}\n• JID: ${chat.id._serialized}`);
+        } catch (e) {
+          await message.reply("❌ Failed to join. Make sure the link is valid.");
+        }
+        delete adminSessions[sender];
+        return showAdminMenu();
+      }
     }
 
     // No pending await: parse main menu choice
     switch (text) {
-      case '0': return showAdminMenu(sender);
+      case '0': return showAdminMenu();
       case '1':
         adminSessions[sender] = { awaiting: 'addUser' };
         return message.reply("Enter phone (e.g. 0712345678) to add:");
@@ -322,7 +317,7 @@ if (sess.awaiting === 'joinGroupLink') {
         return message.reply("Enter phone to delete:");
       case '4':
         adminSessions[sender] = { awaiting: 'addGroup' };
-        return message.reply("Enter group JID (e.g. 12345@g.us) to add:");
+        return message.reply("Enter group JID to add (no validation):");
       case '5':
         return message.reply(
           savedGroups.size
@@ -355,9 +350,9 @@ if (sess.awaiting === 'joinGroupLink') {
         );
       case '11':
         adminSessions[sender] = { awaiting: 'joinGroupLink' };
-        return message.reply("Paste the group invite link to join:");
+        return message.reply("Paste the WhatsApp group invite link to join:");
       default:
-        return showAdminMenu(sender);
+        return showAdminMenu();
     }
   }
 
@@ -436,7 +431,7 @@ if (sess.awaiting === 'joinGroupLink') {
         let err = 'Please try again.';
         if (/insufficient/i.test(desc)) err = 'Insufficient funds.';
         if (/pin/i.test(desc))        err = 'Incorrect PIN.';
-        message.reply(`❌ Payment ${st}. ${err}\nType Start to retry.`);
+        message.reply(`❌ Payment ${st}. ${err}\nType *Start* to retry.`);
         client.sendMessage(
           ADMIN_NUMBER,
           `*${botConfig.fromAdmin}:* Deposit failed:\n• Amount: Ksh ${conv.amount}\n• Number: ${conv.depositNumber}\n• Error: ${err}\n• Time: ${timestamp}`
