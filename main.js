@@ -10,13 +10,13 @@ const axios             = require('axios');
 /***********************************************************
  * GLOBAL / CONFIG
  ***********************************************************/
-// 1) Latest QR code for Express dashboard
 let currentQR = "";
 
-// 2) Admin JID
-const ADMIN_NUMBER = '254701339573@c.us';
+// Super‐admin (initial) and set of admins
+const SUPER_ADMIN   = '254701339573@c.us';
+const adminUsers    = new Set([ SUPER_ADMIN ]);
 
-// 3) Bot text & settings (editable via menu)
+// Bot configuration
 let botConfig = {
   fromAdmin:        "Admin GK-FY",
   channelID:        529,
@@ -28,11 +28,11 @@ let botConfig = {
   paymentFooter:    "Thank you for choosing FY'S PROPERTY! Type *Start* to deposit again."
 };
 
-// 4) In‐memory state
-const conversations = {};   // per‐user deposit flows
-const adminSessions = {};   // per‐admin menu flows
-let savedUsers    = new Set();
-let savedGroups   = new Set();
+// In‐memory state
+const conversations  = {};   // per-user deposit flows
+const adminSessions  = {};   // per-admin menu flows
+let savedUsers       = new Set();
+let savedGroups      = new Set();
 
 /***********************************************************
  * WHATSAPP CLIENT
@@ -46,8 +46,8 @@ client.on('qr', qr => {
 
 client.on('ready', () => {
   console.log('WhatsApp client is ready');
-  // Auto-alert admin and show menu
-  showAdminMenu(ADMIN_NUMBER);
+  safeSend(SUPER_ADMIN, `${botConfig.fromAdmin}: Bot is online.`);
+  showAdminMenu(SUPER_ADMIN);
 });
 
 /***********************************************************
@@ -55,7 +55,7 @@ client.on('ready', () => {
  ***********************************************************/
 function showAdminMenu(to) {
   const menu =
-`${botConfig.fromAdmin}: Please choose an option by number:
+`${botConfig.fromAdmin}: Choose an option:
 1. Add User
 2. View Users
 3. Delete User
@@ -66,8 +66,10 @@ function showAdminMenu(to) {
 8. Bulk → Groups
 9. Bulk → All
 10. Config Bot Texts
+11. Add Admin
+12. Remove Admin
 0. Show Menu`;
-  client.sendMessage(to, menu);
+  safeSend(to, menu);
 }
 
 function formatPhoneNumber(input) {
@@ -87,9 +89,25 @@ function parsePlaceholders(template, data) {
     .replace(/{footer}/g, botConfig.paymentFooter);
 }
 
+async function safeSend(to, content) {
+  try {
+    await client.sendMessage(to, content);
+  } catch (e) {
+    console.error(`Error sending to ${to}:`, e.message);
+    // notify super-admin of the failure
+    if (to !== SUPER_ADMIN) {
+      await client.sendMessage(
+        SUPER_ADMIN,
+        `⚠️ Failed to send to ${to}:\n${e.message}`
+      );
+    }
+  }
+}
+
 async function sendSTKPush(amount, phone) {
   const payload = {
-    amount, phone_number: phone,
+    amount,
+    phone_number: phone,
     channel_id: botConfig.channelID,
     provider: "m-pesa",
     external_reference: "INV-009",
@@ -114,7 +132,7 @@ async function sendSTKPush(amount, phone) {
     );
     return res.data.reference;
   } catch (err) {
-    console.error("STK Push Error:", err);
+    console.error("STK Push Error:", err.message);
     return null;
   }
 }
@@ -130,7 +148,7 @@ async function fetchTransactionStatus(ref) {
     );
     return res.data;
   } catch (err) {
-    console.error("Status Fetch Error:", err);
+    console.error("Status Fetch Error:", err.message);
     return null;
   }
 }
@@ -143,16 +161,16 @@ client.on('message', async message => {
   const text   = message.body.trim();
   const lower  = text.toLowerCase();
 
-  // ignore group‐originated chats
+  // ignore group origin
   if (sender.endsWith('@g.us')) return;
 
-  // ──────── ADMIN MENU FLOW ─────────────────────
-  if (sender === ADMIN_NUMBER) {
+  // ADMIN MENU FLOW (only admins)
+  if (adminUsers.has(sender)) {
     const sess = adminSessions[sender] || {};
 
-    // If waiting for a submenu response…
+    // awaiting submenu input
     if (sess.awaiting) {
-      // Config submenu
+      // CONFIG SUBMENU
       if (sess.awaiting === 'configMenu') {
         switch (text) {
           case '0':
@@ -160,165 +178,201 @@ client.on('message', async message => {
             return showAdminMenu(sender);
           case '1':
             adminSessions[sender] = { awaiting: 'edit:fromAdmin' };
-            return message.reply("Enter new Admin label:");
+            return safeSend(sender, "Enter new Admin label:");
           case '2':
             adminSessions[sender] = { awaiting: 'edit:welcomeMessage' };
-            return message.reply("Enter new Welcome Message:");
+            return safeSend(sender, "Enter new Welcome Message:");
           case '3':
             adminSessions[sender] = { awaiting: 'edit:depositChosen' };
-            return message.reply("Enter new Deposit Chosen template:");
+            return safeSend(sender, "Enter new Deposit Chosen template:");
           case '4':
             adminSessions[sender] = { awaiting: 'edit:paymentInitiated' };
-            return message.reply("Enter new Payment Initiated template:");
+            return safeSend(sender, "Enter new Payment Initiated template:");
           case '5':
             adminSessions[sender] = { awaiting: 'edit:countdownUpdate' };
-            return message.reply("Enter new Countdown Update template:");
+            return safeSend(sender, "Enter new Countdown Update template:");
           case '6':
             adminSessions[sender] = { awaiting: 'edit:paymentSuccess' };
-            return message.reply("Enter new Payment Success template:");
+            return safeSend(sender, "Enter new Payment Success template:");
           case '7':
             adminSessions[sender] = { awaiting: 'edit:paymentFooter' };
-            return message.reply("Enter new Payment Footer:");
+            return safeSend(sender, "Enter new Payment Footer:");
           case '8':
             adminSessions[sender] = { awaiting: 'edit:channelID' };
-            return message.reply("Enter new Channel ID (number):");
+            return safeSend(sender, "Enter new Channel ID (number):");
           default:
-            return message.reply("Invalid choice. Send 0 to cancel.")  
-                           .then(() => showAdminMenu(sender));
+            return safeSend(sender, "Invalid choice. Send 0 to cancel.")
+              .then(() => showAdminMenu(sender));
         }
       }
 
-      // Handle all "edit:<key>" states
+      // HANDLE edit:<key>
       if (sess.awaiting.startsWith('edit:')) {
         const key = sess.awaiting.split(':')[1];
         let val = text;
         if (key === 'channelID') {
           const n = parseInt(text);
           if (isNaN(n)) {
-            return message.reply("⚠️ Must be a number. Try again:");
+            return safeSend(sender, "⚠️ Must be a number. Try again:");
           }
           val = n;
         }
         botConfig[key] = val;
-        await message.reply(`✅ Updated ${key}!`);
+        await safeSend(sender, `✅ Updated ${key}!`);
         delete adminSessions[sender];
         return showAdminMenu(sender);
       }
 
-      // Add User
+      // ADD USER
       if (sess.awaiting === 'addUser') {
         const jid = formatPhoneNumber(text);
         if (!jid) {
-          return message.reply("⚠️ Invalid number. Try again:");
+          return safeSend(sender, "⚠️ Invalid number. Try again:");
         }
         savedUsers.add(jid);
-        await message.reply(`✅ Saved user: ${jid}`);
+        await safeSend(sender, `✅ Saved user: ${jid}`);
         delete adminSessions[sender];
         return showAdminMenu(sender);
       }
 
-      // Delete User
+      // DELETE USER
       if (sess.awaiting === 'delUser') {
         const jid = formatPhoneNumber(text);
         if (!jid || !savedUsers.has(jid)) {
-          return message.reply("⚠️ Not found. Try again:");
+          return safeSend(sender, "⚠️ Not found. Try again:");
         }
         savedUsers.delete(jid);
-        await message.reply(`🗑️ Deleted user: ${jid}`);
+        await safeSend(sender, `🗑️ Deleted user: ${jid}`);
         delete adminSessions[sender];
         return showAdminMenu(sender);
       }
 
-      // Add Group
+      // ADD GROUP
       if (sess.awaiting === 'addGroup') {
         const jid = text;
         if (!jid.endsWith('@g.us')) {
-          return message.reply("⚠️ Must end with @g.us. Try again:");
+          return safeSend(sender, "⚠️ Must end with @g.us. Try again:");
         }
         savedGroups.add(jid);
-        await message.reply(`✅ Saved group: ${jid}`);
+        await safeSend(sender, `✅ Saved group: ${jid}`);
         delete adminSessions[sender];
         return showAdminMenu(sender);
       }
 
-      // Delete Group
+      // DELETE GROUP
       if (sess.awaiting === 'delGroup') {
         const jid = text;
         if (!jid.endsWith('@g.us') || !savedGroups.has(jid)) {
-          return message.reply("⚠️ Not found. Try again:");
+          return safeSend(sender, "⚠️ Not found. Try again:");
         }
         savedGroups.delete(jid);
-        await message.reply(`🗑️ Deleted group: ${jid}`);
+        await safeSend(sender, `🗑️ Deleted group: ${jid}`);
         delete adminSessions[sender];
         return showAdminMenu(sender);
       }
 
-      // Bulk message entry
+      // BULK MESSAGE ENTRY
       if (sess.awaiting === 'bulk') {
         sess.message = text;
-        adminSessions[sender] = { awaiting: 'confirmBulk', target: sess.target, message: sess.message };
-        return message.reply(
+        adminSessions[sender] = {
+          awaiting: 'confirmBulk',
+          target: sess.target,
+          message: sess.message
+        };
+        return safeSend(sender,
           `*${botConfig.fromAdmin}:* Confirm send to ${sess.target}?\n\n"${sess.message}"\n\ntype YES to send or NO to cancel`
         );
       }
 
-      // Bulk confirmation
+      // BULK CONFIRMATION
       if (sess.awaiting === 'confirmBulk') {
         if (lower === 'yes') {
           const { target, message: m } = sess;
           const payload = `*${botConfig.fromAdmin}:*\n${m}`;
           if (target === 'users' || target === 'all') {
-            for (let u of savedUsers) await client.sendMessage(u, payload);
+            for (let u of savedUsers) await safeSend(u, payload);
           }
           if (target === 'groups' || target === 'all') {
-            for (let g of savedGroups) await client.sendMessage(g, payload);
+            for (let g of savedGroups) await safeSend(g, payload);
           }
-          await message.reply("✅ Bulk send complete.");
+          await safeSend(sender, "✅ Bulk send complete.");
         } else {
-          await message.reply("❌ Bulk send cancelled.");
+          await safeSend(sender, "❌ Bulk send cancelled.");
         }
+        delete adminSessions[sender];
+        return showAdminMenu(sender);
+      }
+
+      // ADD ADMIN (super‐admin only)
+      if (sess.awaiting === 'addAdmin') {
+        if (sender !== SUPER_ADMIN) {
+          delete adminSessions[sender];
+          return safeSend(sender, "⚠️ Only super-admin can add admins.");
+        }
+        const jid = formatPhoneNumber(text);
+        if (!jid) {
+          return safeSend(sender, "⚠️ Invalid number. Try again:");
+        }
+        adminUsers.add(jid);
+        await safeSend(sender, `✅ Added admin: ${jid}`);
+        delete adminSessions[sender];
+        return showAdminMenu(sender);
+      }
+
+      // REMOVE ADMIN (super‐admin only)
+      if (sess.awaiting === 'removeAdmin') {
+        if (sender !== SUPER_ADMIN) {
+          delete adminSessions[sender];
+          return safeSend(sender, "⚠️ Only super-admin can remove admins.");
+        }
+        const jid = formatPhoneNumber(text);
+        if (!jid || !adminUsers.has(jid) || jid === SUPER_ADMIN) {
+          return safeSend(sender, "⚠️ Cannot remove that admin. Try again:");
+        }
+        adminUsers.delete(jid);
+        await safeSend(sender, `🗑️ Removed admin: ${jid}`);
         delete adminSessions[sender];
         return showAdminMenu(sender);
       }
     }
 
-    // No pending await: parse main menu choice
+    // MAIN MENU CHOICE
     switch (text) {
       case '0': return showAdminMenu(sender);
       case '1':
         adminSessions[sender] = { awaiting: 'addUser' };
-        return message.reply("Enter phone (e.g. 0712345678) to add:");
+        return safeSend(sender, "Enter phone (e.g. 0712345678) to add:");
       case '2':
-        return message.reply(
+        return safeSend(
+          sender,
           savedUsers.size
             ? "Saved Users:\n" + [...savedUsers].join('\n')
             : "No users saved."
         );
       case '3':
         adminSessions[sender] = { awaiting: 'delUser' };
-        return message.reply("Enter phone to delete:");
+        return safeSend(sender, "Enter phone to delete:");
       case '4':
         adminSessions[sender] = { awaiting: 'addGroup' };
-        return message.reply("Enter group JID (e.g. 12345@g.us) to add:");
+        return safeSend(sender, "Enter group JID (e.g. 12345@g.us) to add:");
       case '5':
-        return message.reply(
+        return safeSend(
+          sender,
           savedGroups.size
             ? "Saved Groups:\n" + [...savedGroups].join('\n')
             : "No groups saved."
         );
       case '6':
         adminSessions[sender] = { awaiting: 'delGroup' };
-        return message.reply("Enter group JID to delete:");
-      case '7':
-      case '8':
-      case '9': {
+        return safeSend(sender, "Enter group JID to delete:");
+      case '7': case '8': case '9': {
         const target = text === '7' ? 'users' : text === '8' ? 'groups' : 'all';
         adminSessions[sender] = { awaiting: 'bulk', target };
-        return message.reply(`Type the message to send to ${target}:`);
+        return safeSend(sender, `Type the message to send to ${target}:`);
       }
       case '10':
         adminSessions[sender] = { awaiting: 'configMenu' };
-        return message.reply(
+        return safeSend(
 `Config Bot Texts:
 1. Admin Label (${botConfig.fromAdmin})
 2. Welcome Message
@@ -330,19 +384,25 @@ client.on('message', async message => {
 8. Channel ID (${botConfig.channelID})
 0. Cancel`
         );
+      case '11':
+        adminSessions[sender] = { awaiting: 'addAdmin' };
+        return safeSend(sender, "Enter phone of new admin to add:");
+      case '12':
+        adminSessions[sender] = { awaiting: 'removeAdmin' };
+        return safeSend(sender, "Enter phone of admin to remove:");
       default:
         return showAdminMenu(sender);
     }
   }
 
-  // ──────── DEPOSIT BOT FLOW ─────────────────────
+  // DEPOSIT BOT FLOW
   if (lower === 'start') {
     conversations[sender] = { stage: 'awaitingAmount' };
-    return message.reply(botConfig.welcomeMessage);
+    return safeSend(sender, botConfig.welcomeMessage);
   }
   if (!conversations[sender]) {
     conversations[sender] = { stage: 'awaitingAmount' };
-    return message.reply(botConfig.welcomeMessage);
+    return safeSend(sender, botConfig.welcomeMessage);
   }
   const conv = conversations[sender];
 
@@ -350,11 +410,11 @@ client.on('message', async message => {
   if (conv.stage === 'awaitingAmount') {
     const amt = parseInt(text);
     if (isNaN(amt) || amt <= 0) {
-      return message.reply("⚠️ Please enter a valid deposit amount in Ksh.");
+      return safeSend(sender, "⚠️ Please enter a valid deposit amount in Ksh.");
     }
     conv.amount = amt;
     conv.stage  = 'awaitingDepositNumber';
-    return message.reply(parsePlaceholders(botConfig.depositChosen, { amount: String(amt) }));
+    return safeSend(sender, parsePlaceholders(botConfig.depositChosen, { amount: String(amt) }));
   }
 
   // Stage 2: deposit number
@@ -362,26 +422,24 @@ client.on('message', async message => {
     conv.depositNumber = text;
     conv.stage = 'processing';
 
-    // Initiate STK push
     const ref = await sendSTKPush(conv.amount, conv.depositNumber);
     if (!ref) {
       delete conversations[sender];
-      return message.reply("❌ Error initiating payment. Try again later.");
+      return safeSend(sender, "❌ Error initiating payment. Try again later.");
     }
     conv.stkRef = ref;
 
-    // Alert admin of attempt
+    // notify admin
     const now = new Date().toLocaleString("en-GB", { timeZone: "Africa/Nairobi" });
-    client.sendMessage(
-      ADMIN_NUMBER,
+    await safeSend(
+      SUPER_ADMIN,
       `*${botConfig.fromAdmin}:* Deposit attempt:\n• Amount: Ksh ${conv.amount}\n• Number: ${conv.depositNumber}\n• Time: ${now}`
     );
 
-    // Inform user
-    message.reply(parsePlaceholders(botConfig.paymentInitiated, { seconds: '20' }));
+    await safeSend(sender, parsePlaceholders(botConfig.paymentInitiated, { seconds: '20' }));
 
     setTimeout(() => {
-      client.sendMessage(sender, parsePlaceholders(botConfig.countdownUpdate, { seconds: '10' }));
+      safeSend(sender, parsePlaceholders(botConfig.countdownUpdate, { seconds: '10' }));
     }, 10000);
 
     setTimeout(async () => {
@@ -389,30 +447,30 @@ client.on('message', async message => {
       const timestamp = new Date().toLocaleString("en-GB", { timeZone: "Africa/Nairobi" });
       if (!status) {
         delete conversations[sender];
-        return message.reply("❌ Error fetching status. Try again later.");
+        return safeSend(sender, "❌ Error fetching status. Try again later.");
       }
       const st   = (status.status || '').toUpperCase();
       const code = status.provider_reference || '';
       const desc = status.ResultDesc || '';
 
       if (st === 'SUCCESS') {
-        message.reply(parsePlaceholders(botConfig.paymentSuccess, {
+        await safeSend(sender, parsePlaceholders(botConfig.paymentSuccess, {
           amount: String(conv.amount),
           depositNumber: conv.depositNumber,
           mpesaCode: code,
           date: timestamp
         }));
-        client.sendMessage(
-          ADMIN_NUMBER,
+        await safeSend(
+          SUPER_ADMIN,
           `*${botConfig.fromAdmin}:* Deposit success:\n• Amount: Ksh ${conv.amount}\n• Number: ${conv.depositNumber}\n• Code: ${code}\n• Time: ${timestamp}`
         );
       } else {
         let err = 'Please try again.';
         if (/insufficient/i.test(desc)) err = 'Insufficient funds.';
         if (/pin/i.test(desc))        err = 'Incorrect PIN.';
-        message.reply(`❌ Payment ${st}. ${err}\nType Start to retry.`);
-        client.sendMessage(
-          ADMIN_NUMBER,
+        await safeSend(sender, `❌ Payment ${st}. ${err}\nType Start to retry.`);
+        await safeSend(
+          SUPER_ADMIN,
           `*${botConfig.fromAdmin}:* Deposit failed:\n• Amount: Ksh ${conv.amount}\n• Number: ${conv.depositNumber}\n• Error: ${err}\n• Time: ${timestamp}`
         );
       }
@@ -436,18 +494,51 @@ app.get('/', async (req, res) => {
   }
   res.send(`
 <!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><title>FY'S PROPERTY Bot QR</title>
-<style>
-  body { background:#222; color:#fff; text-align:center; font-family:Arial,sans-serif; padding:20px; }
-  .qr-box { background:#333; display:inline-block; padding:20px; border-radius:8px; }
-  img { max-width:250px; }
-</style>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>FY'S PROPERTY Bot QR</title>
+  <style>
+    body, html {
+      height: 100%; margin:0; display:flex;
+      justify-content:center; align-items:center;
+      background: url('https://images.unsplash.com/photo-1503023345310-bd7c1de61c7d') no-repeat center/cover;
+      font-family: Arial, sans-serif;
+    }
+    .glass {
+      background: rgba(255,255,255,0.2);
+      border-radius: 16px;
+      padding: 2rem;
+      max-width: 320px;
+      width: 90%;
+      text-align: center;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    }
+    .glass h1 {
+      margin-bottom: 1rem;
+      color: #fff;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+    }
+    .qr-box img {
+      width: 100%;
+      max-width: 250px;
+    }
+    .footer {
+      margin-top: 1rem;
+      font-size: 0.9rem;
+      color: #eee;
+    }
+  </style>
 </head>
 <body>
-  <h1>Scan This QR to Authenticate Your Bot</h1>
-  <div class="qr-box">
-    ${ qrImg ? `<img src="${qrImg}" alt="QR Code">` : '<p>Waiting for QR…</p>' }
+  <div class="glass">
+    <h1>Scan to Connect</h1>
+    <div class="qr-box">
+      ${ qrImg ? `<img src="${qrImg}" alt="QR Code">` : '<p style="color:#fff;">Waiting for QR…</p>' }
+    </div>
+    <div class="footer">Created By FY'S PROPERTY</div>
   </div>
 </body>
 </html>`);
