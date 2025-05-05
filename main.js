@@ -46,7 +46,7 @@ client.on('qr', qr => {
 
 client.on('ready', () => {
   console.log('WhatsApp client is ready');
-  safeSend(SUPER_ADMIN, `${botConfig.fromAdmin}: Bot is online.`);
+  adminReply(SUPER_ADMIN, `${botConfig.fromAdmin}: Bot is online.`);
   showAdminMenu(SUPER_ADMIN);
 });
 
@@ -67,9 +67,8 @@ function showAdminMenu(to) {
 9. Bulk → All
 10. Config Bot Texts
 11. Add Admin
-12. Remove Admin
-0. Show Menu`;
-  safeSend(to, menu);
+12. Remove Admin`;
+  adminReply(to, menu);
 }
 
 function formatPhoneNumber(input) {
@@ -89,12 +88,12 @@ function parsePlaceholders(template, data) {
     .replace(/{footer}/g, botConfig.paymentFooter);
 }
 
+// Wraps sendMessage and never throws; reports failures to super‐admin
 async function safeSend(to, content) {
   try {
     await client.sendMessage(to, content);
   } catch (e) {
     console.error(`Error sending to ${to}:`, e.message);
-    // notify super-admin of the failure
     if (to !== SUPER_ADMIN) {
       await client.sendMessage(
         SUPER_ADMIN,
@@ -102,6 +101,12 @@ async function safeSend(to, content) {
       );
     }
   }
+}
+
+// For admin recipients: append back/main options automatically
+function adminReply(to, content) {
+  const suffix = `\n\n0. Go Back 🔙\n00. Main Menu`;
+  return safeSend(to, content + suffix);
 }
 
 async function sendSTKPush(amount, phone) {
@@ -161,48 +166,55 @@ client.on('message', async message => {
   const text   = message.body.trim();
   const lower  = text.toLowerCase();
 
-  // ignore group origin
+  // ignore any group origin
   if (sender.endsWith('@g.us')) return;
 
-  // ADMIN MENU FLOW (only admins)
+  // ── ADMIN FLOW ──────────────────────────────
   if (adminUsers.has(sender)) {
     const sess = adminSessions[sender] || {};
 
-    // awaiting submenu input
+    // If awaiting submenu input…
     if (sess.awaiting) {
+      // 00 = main menu
+      if (text === '00') {
+        delete adminSessions[sender];
+        return showAdminMenu(sender);
+      }
+      // 0 = go back (cancel this submenu)
+      if (text === '0') {
+        delete adminSessions[sender];
+        return adminReply(sender, "Cancelled, back one step.");
+      }
+
       // CONFIG SUBMENU
       if (sess.awaiting === 'configMenu') {
         switch (text) {
-          case '0':
-            delete adminSessions[sender];
-            return showAdminMenu(sender);
           case '1':
             adminSessions[sender] = { awaiting: 'edit:fromAdmin' };
-            return safeSend(sender, "Enter new Admin label:");
+            return adminReply(sender, "Enter new Admin label:");
           case '2':
             adminSessions[sender] = { awaiting: 'edit:welcomeMessage' };
-            return safeSend(sender, "Enter new Welcome Message:");
+            return adminReply(sender, "Enter new Welcome Message:");
           case '3':
             adminSessions[sender] = { awaiting: 'edit:depositChosen' };
-            return safeSend(sender, "Enter new Deposit Chosen template:");
+            return adminReply(sender, "Enter new Deposit Chosen template:");
           case '4':
             adminSessions[sender] = { awaiting: 'edit:paymentInitiated' };
-            return safeSend(sender, "Enter new Payment Initiated template:");
+            return adminReply(sender, "Enter new Payment Initiated template:");
           case '5':
             adminSessions[sender] = { awaiting: 'edit:countdownUpdate' };
-            return safeSend(sender, "Enter new Countdown Update template:");
+            return adminReply(sender, "Enter new Countdown Update template:");
           case '6':
             adminSessions[sender] = { awaiting: 'edit:paymentSuccess' };
-            return safeSend(sender, "Enter new Payment Success template:");
+            return adminReply(sender, "Enter new Payment Success template:");
           case '7':
             adminSessions[sender] = { awaiting: 'edit:paymentFooter' };
-            return safeSend(sender, "Enter new Payment Footer:");
+            return adminReply(sender, "Enter new Payment Footer:");
           case '8':
             adminSessions[sender] = { awaiting: 'edit:channelID' };
-            return safeSend(sender, "Enter new Channel ID (number):");
+            return adminReply(sender, "Enter new Channel ID (number):");
           default:
-            return safeSend(sender, "Invalid choice. Send 0 to cancel.")
-              .then(() => showAdminMenu(sender));
+            return adminReply(sender, "Invalid choice. Try again.");
         }
       }
 
@@ -213,12 +225,11 @@ client.on('message', async message => {
         if (key === 'channelID') {
           const n = parseInt(text);
           if (isNaN(n)) {
-            return safeSend(sender, "⚠️ Must be a number. Try again:");
+            return adminReply(sender, "⚠️ Must be a number. Try again:");
           }
           val = n;
         }
         botConfig[key] = val;
-        await safeSend(sender, `✅ Updated ${key}!`);
         delete adminSessions[sender];
         return showAdminMenu(sender);
       }
@@ -227,10 +238,9 @@ client.on('message', async message => {
       if (sess.awaiting === 'addUser') {
         const jid = formatPhoneNumber(text);
         if (!jid) {
-          return safeSend(sender, "⚠️ Invalid number. Try again:");
+          return adminReply(sender, "⚠️ Invalid number. Try again:");
         }
         savedUsers.add(jid);
-        await safeSend(sender, `✅ Saved user: ${jid}`);
         delete adminSessions[sender];
         return showAdminMenu(sender);
       }
@@ -239,10 +249,9 @@ client.on('message', async message => {
       if (sess.awaiting === 'delUser') {
         const jid = formatPhoneNumber(text);
         if (!jid || !savedUsers.has(jid)) {
-          return safeSend(sender, "⚠️ Not found. Try again:");
+          return adminReply(sender, "⚠️ Not found. Try again:");
         }
         savedUsers.delete(jid);
-        await safeSend(sender, `🗑️ Deleted user: ${jid}`);
         delete adminSessions[sender];
         return showAdminMenu(sender);
       }
@@ -251,10 +260,9 @@ client.on('message', async message => {
       if (sess.awaiting === 'addGroup') {
         const jid = text;
         if (!jid.endsWith('@g.us')) {
-          return safeSend(sender, "⚠️ Must end with @g.us. Try again:");
+          return adminReply(sender, "⚠️ Must end with @g.us. Try again:");
         }
         savedGroups.add(jid);
-        await safeSend(sender, `✅ Saved group: ${jid}`);
         delete adminSessions[sender];
         return showAdminMenu(sender);
       }
@@ -263,10 +271,9 @@ client.on('message', async message => {
       if (sess.awaiting === 'delGroup') {
         const jid = text;
         if (!jid.endsWith('@g.us') || !savedGroups.has(jid)) {
-          return safeSend(sender, "⚠️ Not found. Try again:");
+          return adminReply(sender, "⚠️ Not found. Try again:");
         }
         savedGroups.delete(jid);
-        await safeSend(sender, `🗑️ Deleted group: ${jid}`);
         delete adminSessions[sender];
         return showAdminMenu(sender);
       }
@@ -279,8 +286,9 @@ client.on('message', async message => {
           target: sess.target,
           message: sess.message
         };
-        return safeSend(sender,
-          `*${botConfig.fromAdmin}:* Confirm send to ${sess.target}?\n\n"${sess.message}"\n\ntype YES to send or NO to cancel`
+        return adminReply(
+          sender,
+          `Confirm send to ${sess.target}?\n\n"${sess.message}"`
         );
       }
 
@@ -295,55 +303,57 @@ client.on('message', async message => {
           if (target === 'groups' || target === 'all') {
             for (let g of savedGroups) await safeSend(g, payload);
           }
-          await safeSend(sender, "✅ Bulk send complete.");
+          delete adminSessions[sender];
+          return adminReply(sender, "✅ Bulk send complete.");
         } else {
-          await safeSend(sender, "❌ Bulk send cancelled.");
+          delete adminSessions[sender];
+          return showAdminMenu(sender);
         }
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
       }
 
-      // ADD ADMIN (super‐admin only)
+      // ADD ADMIN
       if (sess.awaiting === 'addAdmin') {
         if (sender !== SUPER_ADMIN) {
           delete adminSessions[sender];
-          return safeSend(sender, "⚠️ Only super-admin can add admins.");
+          return adminReply(sender, "⚠️ Only super-admin can add admins.");
         }
         const jid = formatPhoneNumber(text);
         if (!jid) {
-          return safeSend(sender, "⚠️ Invalid number. Try again:");
+          return adminReply(sender, "⚠️ Invalid number. Try again:");
         }
         adminUsers.add(jid);
-        await safeSend(sender, `✅ Added admin: ${jid}`);
         delete adminSessions[sender];
         return showAdminMenu(sender);
       }
 
-      // REMOVE ADMIN (super‐admin only)
+      // REMOVE ADMIN
       if (sess.awaiting === 'removeAdmin') {
         if (sender !== SUPER_ADMIN) {
           delete adminSessions[sender];
-          return safeSend(sender, "⚠️ Only super-admin can remove admins.");
+          return adminReply(sender, "⚠️ Only super-admin can remove admins.");
         }
         const jid = formatPhoneNumber(text);
         if (!jid || !adminUsers.has(jid) || jid === SUPER_ADMIN) {
-          return safeSend(sender, "⚠️ Cannot remove that admin. Try again:");
+          return adminReply(sender, "⚠️ Cannot remove that admin. Try again:");
         }
         adminUsers.delete(jid);
-        await safeSend(sender, `🗑️ Removed admin: ${jid}`);
         delete adminSessions[sender];
         return showAdminMenu(sender);
       }
     }
 
-    // MAIN MENU CHOICE
+    // No pending await → main menu choice
     switch (text) {
-      case '0': return showAdminMenu(sender);
+      case '0': // Go Back (same as cancel)
+        return adminReply(sender, "🔙 Back.");
+      case '00': // Main Menu
+        delete adminSessions[sender];
+        return showAdminMenu(sender);
       case '1':
         adminSessions[sender] = { awaiting: 'addUser' };
-        return safeSend(sender, "Enter phone (e.g. 0712345678) to add:");
+        return adminReply(sender, "Enter phone (e.g. 0712345678) to add:");
       case '2':
-        return safeSend(
+        return adminReply(
           sender,
           savedUsers.size
             ? "Saved Users:\n" + [...savedUsers].join('\n')
@@ -351,12 +361,12 @@ client.on('message', async message => {
         );
       case '3':
         adminSessions[sender] = { awaiting: 'delUser' };
-        return safeSend(sender, "Enter phone to delete:");
+        return adminReply(sender, "Enter phone to delete:");
       case '4':
         adminSessions[sender] = { awaiting: 'addGroup' };
-        return safeSend(sender, "Enter group JID (e.g. 12345@g.us) to add:");
+        return adminReply(sender, "Enter group JID (e.g. 12345@g.us) to add:");
       case '5':
-        return safeSend(
+        return adminReply(
           sender,
           savedGroups.size
             ? "Saved Groups:\n" + [...savedGroups].join('\n')
@@ -364,15 +374,15 @@ client.on('message', async message => {
         );
       case '6':
         adminSessions[sender] = { awaiting: 'delGroup' };
-        return safeSend(sender, "Enter group JID to delete:");
+        return adminReply(sender, "Enter group JID to delete:");
       case '7': case '8': case '9': {
         const target = text === '7' ? 'users' : text === '8' ? 'groups' : 'all';
         adminSessions[sender] = { awaiting: 'bulk', target };
-        return safeSend(sender, `Type the message to send to ${target}:`);
+        return adminReply(sender, `Type the message to send to ${target}:`);
       }
       case '10':
         adminSessions[sender] = { awaiting: 'configMenu' };
-        return safeSend(
+        return adminReply(
 `Config Bot Texts:
 1. Admin Label (${botConfig.fromAdmin})
 2. Welcome Message
@@ -381,21 +391,20 @@ client.on('message', async message => {
 5. Countdown Update
 6. Payment Success
 7. Payment Footer
-8. Channel ID (${botConfig.channelID})
-0. Cancel`
+8. Channel ID (${botConfig.channelID})`
         );
       case '11':
         adminSessions[sender] = { awaiting: 'addAdmin' };
-        return safeSend(sender, "Enter phone of new admin to add:");
+        return adminReply(sender, "Enter phone of new admin to add:");
       case '12':
         adminSessions[sender] = { awaiting: 'removeAdmin' };
-        return safeSend(sender, "Enter phone of admin to remove:");
+        return adminReply(sender, "Enter phone of admin to remove:");
       default:
         return showAdminMenu(sender);
     }
   }
 
-  // DEPOSIT BOT FLOW
+  // ── DEPOSIT BOT FLOW ───────────────────────────
   if (lower === 'start') {
     conversations[sender] = { stage: 'awaitingAmount' };
     return safeSend(sender, botConfig.welcomeMessage);
@@ -406,7 +415,7 @@ client.on('message', async message => {
   }
   const conv = conversations[sender];
 
-  // Stage 1: amount entry
+  // Stage 1: amount
   if (conv.stage === 'awaitingAmount') {
     const amt = parseInt(text);
     if (isNaN(amt) || amt <= 0) {
