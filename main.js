@@ -12,27 +12,26 @@ const axios             = require('axios');
  ***********************************************************/
 let currentQR = "";
 
-// Super‐admin (initial) and set of admins
-const SUPER_ADMIN   = '254701339573@c.us';
-const adminUsers    = new Set([ SUPER_ADMIN ]);
+// Super‐admin and set of admins
+const SUPER_ADMIN = '254701339573@c.us';
+const adminUsers  = new Set([ SUPER_ADMIN ]);
 
 // Bot configuration
 let botConfig = {
   fromAdmin:        "Admin GK-FY",
   channelID:        529,
-  welcomeMessage:   "*👋 Welcome to FY'S PROPERTY Deposit Bot!*\nHow much would you like to deposit? 💰",
-  depositChosen:    "*👍 Great!* You've chosen to deposit *Ksh {amount}*.\nNow, please provide your deposit number (e.g., your account number) 📱",
-  paymentInitiated: "*⏳ Payment initiated!* We'll check status in {seconds} seconds...\n_Stay tuned!_",
-  countdownUpdate:  "*⏳ {seconds} seconds left...*\nWe will fetch the status soon!",
-  paymentSuccess:   "*🎉 Payment Successful!*\n*💰 Amount:* Ksh {amount}\n*📞 Deposit Number:* {depositNumber}\n*🆔 MPESA Transaction Code:* {mpesaCode}\n*⏰ Date/Time (KE):* {date}\n{footer}",
+  welcomeMessage:   "👋 *Welcome to FY'S PROPERTY Deposit Bot!* How much would you like to deposit? 💰",
+  depositChosen:    "👍 *Great!* You've chosen to deposit Ksh {amount}. Now, please provide your deposit number (e.g., your account number) 📱",
+  paymentInitiated: "⏳ *Payment initiated!* We'll check status in {seconds} seconds... Stay tuned!",
+  countdownUpdate:  "⏳ {seconds} seconds left... Fetching status soon!",
+  paymentSuccess:   "🎉 *Payment Successful!*\n• Amount: Ksh {amount}\n• Deposit #: {depositNumber}\n• MPESA Code: {mpesaCode}\n• Date/Time: {date}\n\n{footer}",
   paymentFooter:    "Thank you for choosing FY'S PROPERTY! Type *Start* to deposit again."
 };
 
-// In‐memory state
-const conversations  = {};   // per-user deposit flows
-const adminSessions  = {};   // per-admin menu flows
-let savedUsers       = new Set();
-let savedGroups      = new Set();
+const conversations = {};  // per‐user deposit flows
+const adminSessions = {};  // per‐admin menu flows
+let savedUsers  = new Set();
+let savedGroups = new Set();
 
 /***********************************************************
  * WHATSAPP CLIENT
@@ -45,8 +44,8 @@ client.on('qr', qr => {
 });
 
 client.on('ready', () => {
-  console.log('WhatsApp client is ready');
-  adminReply(SUPER_ADMIN, `${botConfig.fromAdmin}: Bot is online.`);
+  console.log('Bot is ready');
+  adminReply(SUPER_ADMIN, "🎉 Bot is now *online* and ready for action!");
   showAdminMenu(SUPER_ADMIN);
 });
 
@@ -55,7 +54,7 @@ client.on('ready', () => {
  ***********************************************************/
 function showAdminMenu(to) {
   const menu =
-`${botConfig.fromAdmin}: Choose an option:
+`${botConfig.fromAdmin}: *Main Menu*
 1. Add User
 2. View Users
 3. Delete User
@@ -74,12 +73,12 @@ function showAdminMenu(to) {
 function formatPhoneNumber(input) {
   let num = input.replace(/[^\d]/g, '');
   if (num.startsWith('0')) num = '254' + num.slice(1);
-  if (!num.startsWith('254') || num.length < 10) return null;
+  if (!num.startsWith('254') || num.length < 12) return null;
   return num + '@c.us';
 }
 
-function parsePlaceholders(template, data) {
-  return template
+function parsePlaceholders(tpl, data) {
+  return tpl
     .replace(/{amount}/g, data.amount || '')
     .replace(/{depositNumber}/g, data.depositNumber || '')
     .replace(/{seconds}/g, data.seconds || '')
@@ -88,35 +87,30 @@ function parsePlaceholders(template, data) {
     .replace(/{footer}/g, botConfig.paymentFooter);
 }
 
-// Wraps sendMessage and never throws; reports failures to super‐admin
-async function safeSend(to, content) {
+async function safeSend(to, msg) {
   try {
-    await client.sendMessage(to, content);
+    await client.sendMessage(to, msg);
   } catch (e) {
-    console.error(`Error sending to ${to}:`, e.message);
+    console.error(`Error→${to}:`, e.message);
     if (to !== SUPER_ADMIN) {
-      await client.sendMessage(
-        SUPER_ADMIN,
-        `⚠️ Failed to send to ${to}:\n${e.message}`
-      );
+      await client.sendMessage(SUPER_ADMIN, `⚠️ Failed to send to ${to}:\n${e.message}`);
     }
   }
 }
 
-// For admin recipients: append back/main options automatically
-function adminReply(to, content) {
-  const suffix = `\n\n0. Go Back 🔙\n00. Main Menu`;
-  return safeSend(to, content + suffix);
+// Always append “Go Back” / “Main Menu” on admin messages
+function adminReply(to, msg) {
+  const suffix = `\n\n0️⃣ Go Back 🔙\n00️⃣ Main Menu`;
+  return safeSend(to, msg + suffix);
 }
 
 async function sendSTKPush(amount, phone) {
   const payload = {
-    amount,
-    phone_number: phone,
+    amount, phone_number: phone,
     channel_id: botConfig.channelID,
     provider: "m-pesa",
     external_reference: "INV-009",
-    customer_name: "John Doe",
+    customer_name: "FY'S PROPERTY User",
     callback_url: "https://your-callback-url",
     account_reference: "FY'S PROPERTY",
     transaction_desc: "FY'S PROPERTY Payment",
@@ -128,10 +122,9 @@ async function sendSTKPush(amount, phone) {
     const res = await axios.post(
       'https://backend.payhero.co.ke/api/v2/payments',
       payload,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6c2lYb09taHRYSlFMbWZ0dFdqeGp4SG13NDFTekJLckl2Z2NWd2F1aw=='
+      { headers: {
+          'Content-Type':'application/json',
+          'Authorization':'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6c2lYb09taHRYSlFMbWZ0dFdqeGp4SG13NDFTekJLckl2Z2NWd2F1aw=='
         }
       }
     );
@@ -147,13 +140,13 @@ async function fetchTransactionStatus(ref) {
     const res = await axios.get(
       `https://backend.payhero.co.ke/api/v2/transaction-status?reference=${encodeURIComponent(ref)}`,
       { headers: {
-          'Authorization': 'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6c2lYb09taHRYSlFMbWZ0dFdqeGp4SG13NDFTekJLckl2Z2NWd2F1aw=='
+          'Authorization':'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6c2lYb09taHRYSlFMbWZ0dFdqeGp4SG13NDFTekJLckl2Z2NWd2F1aw=='
         }
       }
     );
     return res.data;
   } catch (err) {
-    console.error("Status Fetch Error:", err.message);
+    console.error("Fetch Status Error:", err.message);
     return null;
   }
 }
@@ -161,331 +154,216 @@ async function fetchTransactionStatus(ref) {
 /***********************************************************
  * MESSAGE HANDLER
  ***********************************************************/
-client.on('message', async message => {
-  const sender = message.from;
-  const text   = message.body.trim();
-  const lower  = text.toLowerCase();
+client.on('message', async msg => {
+  const from = msg.from, txt = msg.body.trim(), lc = txt.toLowerCase();
+  if (from.endsWith('@g.us')) return;  // ignore groups
 
-  // ignore any group origin
-  if (sender.endsWith('@g.us')) return;
+  // ─── ADMIN FLOW ───────────────────────
+  if (adminUsers.has(from)) {
+    const sess = adminSessions[from] || {};
 
-  // ── ADMIN FLOW ──────────────────────────────
-  if (adminUsers.has(sender)) {
-    const sess = adminSessions[sender] || {};
+    // 00 = main menu | 0 = go back (cancel current step)
+    if (txt === '00') { delete adminSessions[from]; return showAdminMenu(from); }
+    if (txt === '0')  { delete adminSessions[from]; return adminReply(from, "🔙 Went back!"); }
 
-    // If awaiting submenu input…
-    if (sess.awaiting) {
-      // 00 = main menu
-      if (text === '00') {
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
-      }
-      // 0 = go back (cancel this submenu)
-      if (text === '0') {
-        delete adminSessions[sender];
-        return adminReply(sender, "Cancelled, back one step.");
-      }
-
-      // CONFIG SUBMENU
-      if (sess.awaiting === 'configMenu') {
-        switch (text) {
-          case '1':
-            adminSessions[sender] = { awaiting: 'edit:fromAdmin' };
-            return adminReply(sender, "Enter new Admin label:");
-          case '2':
-            adminSessions[sender] = { awaiting: 'edit:welcomeMessage' };
-            return adminReply(sender, "Enter new Welcome Message:");
-          case '3':
-            adminSessions[sender] = { awaiting: 'edit:depositChosen' };
-            return adminReply(sender, "Enter new Deposit Chosen template:");
-          case '4':
-            adminSessions[sender] = { awaiting: 'edit:paymentInitiated' };
-            return adminReply(sender, "Enter new Payment Initiated template:");
-          case '5':
-            adminSessions[sender] = { awaiting: 'edit:countdownUpdate' };
-            return adminReply(sender, "Enter new Countdown Update template:");
-          case '6':
-            adminSessions[sender] = { awaiting: 'edit:paymentSuccess' };
-            return adminReply(sender, "Enter new Payment Success template:");
-          case '7':
-            adminSessions[sender] = { awaiting: 'edit:paymentFooter' };
-            return adminReply(sender, "Enter new Payment Footer:");
-          case '8':
-            adminSessions[sender] = { awaiting: 'edit:channelID' };
-            return adminReply(sender, "Enter new Channel ID (number):");
-          default:
-            return adminReply(sender, "Invalid choice. Try again.");
-        }
-      }
-
-      // HANDLE edit:<key>
-      if (sess.awaiting.startsWith('edit:')) {
-        const key = sess.awaiting.split(':')[1];
-        let val = text;
-        if (key === 'channelID') {
-          const n = parseInt(text);
-          if (isNaN(n)) {
-            return adminReply(sender, "⚠️ Must be a number. Try again:");
-          }
-          val = n;
-        }
-        botConfig[key] = val;
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
-      }
-
-      // ADD USER
-      if (sess.awaiting === 'addUser') {
-        const jid = formatPhoneNumber(text);
-        if (!jid) {
-          return adminReply(sender, "⚠️ Invalid number. Try again:");
-        }
-        savedUsers.add(jid);
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
-      }
-
-      // DELETE USER
-      if (sess.awaiting === 'delUser') {
-        const jid = formatPhoneNumber(text);
-        if (!jid || !savedUsers.has(jid)) {
-          return adminReply(sender, "⚠️ Not found. Try again:");
-        }
-        savedUsers.delete(jid);
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
-      }
-
-      // ADD GROUP
-      if (sess.awaiting === 'addGroup') {
-        const jid = text;
-        if (!jid.endsWith('@g.us')) {
-          return adminReply(sender, "⚠️ Must end with @g.us. Try again:");
-        }
-        savedGroups.add(jid);
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
-      }
-
-      // DELETE GROUP
-      if (sess.awaiting === 'delGroup') {
-        const jid = text;
-        if (!jid.endsWith('@g.us') || !savedGroups.has(jid)) {
-          return adminReply(sender, "⚠️ Not found. Try again:");
-        }
-        savedGroups.delete(jid);
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
-      }
-
-      // BULK MESSAGE ENTRY
-      if (sess.awaiting === 'bulk') {
-        sess.message = text;
-        adminSessions[sender] = {
-          awaiting: 'confirmBulk',
-          target: sess.target,
-          message: sess.message
-        };
-        return adminReply(
-          sender,
-          `Confirm send to ${sess.target}?\n\n"${sess.message}"`
-        );
-      }
-
-      // BULK CONFIRMATION
-      if (sess.awaiting === 'confirmBulk') {
-        if (lower === 'yes') {
-          const { target, message: m } = sess;
-          const payload = `*${botConfig.fromAdmin}:*\n${m}`;
-          if (target === 'users' || target === 'all') {
-            for (let u of savedUsers) await safeSend(u, payload);
-          }
-          if (target === 'groups' || target === 'all') {
-            for (let g of savedGroups) await safeSend(g, payload);
-          }
-          delete adminSessions[sender];
-          return adminReply(sender, "✅ Bulk send complete.");
-        } else {
-          delete adminSessions[sender];
-          return showAdminMenu(sender);
-        }
-      }
-
-      // ADD ADMIN
-      if (sess.awaiting === 'addAdmin') {
-        if (sender !== SUPER_ADMIN) {
-          delete adminSessions[sender];
-          return adminReply(sender, "⚠️ Only super-admin can add admins.");
-        }
-        const jid = formatPhoneNumber(text);
-        if (!jid) {
-          return adminReply(sender, "⚠️ Invalid number. Try again:");
-        }
-        adminUsers.add(jid);
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
-      }
-
-      // REMOVE ADMIN
-      if (sess.awaiting === 'removeAdmin') {
-        if (sender !== SUPER_ADMIN) {
-          delete adminSessions[sender];
-          return adminReply(sender, "⚠️ Only super-admin can remove admins.");
-        }
-        const jid = formatPhoneNumber(text);
-        if (!jid || !adminUsers.has(jid) || jid === SUPER_ADMIN) {
-          return adminReply(sender, "⚠️ Cannot remove that admin. Try again:");
-        }
-        adminUsers.delete(jid);
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
+    // submenu: config texts
+    if (sess.awaiting === 'configMenu') {
+      switch (txt) {
+        case '1': sess.awaiting = 'edit:fromAdmin';   return adminReply(from, "✏️ Enter new *Admin label*:");
+        case '2': sess.awaiting = 'edit:welcomeMessage';   return adminReply(from, "✏️ Enter new *Welcome Message*:");
+        case '3': sess.awaiting = 'edit:depositChosen';    return adminReply(from, "✏️ Enter new *Deposit Prompt*:");
+        case '4': sess.awaiting = 'edit:paymentInitiated'; return adminReply(from, "✏️ Enter new *Payment Initiated*:");
+        case '5': sess.awaiting = 'edit:countdownUpdate'; return adminReply(from, "✏️ Enter new *Countdown Update*:");
+        case '6': sess.awaiting = 'edit:paymentSuccess';   return adminReply(from, "✏️ Enter new *Payment Success*:");
+        case '7': sess.awaiting = 'edit:paymentFooter';    return adminReply(from, "✏️ Enter new *Payment Footer*:");
+        case '8': sess.awaiting = 'edit:channelID';        return adminReply(from, "✏️ Enter new *Channel ID* (number):");
+        default:  return adminReply(from, "❌ Invalid choice, pick 1–8!");
       }
     }
-
-    // No pending await → main menu choice
-    switch (text) {
-      case '0': // Go Back (same as cancel)
-        return adminReply(sender, "🔙 Back.");
-      case '00': // Main Menu
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
-      case '1':
-        adminSessions[sender] = { awaiting: 'addUser' };
-        return adminReply(sender, "Enter phone (e.g. 0712345678) to add:");
-      case '2':
-        return adminReply(
-          sender,
-          savedUsers.size
-            ? "Saved Users:\n" + [...savedUsers].join('\n')
-            : "No users saved."
-        );
-      case '3':
-        adminSessions[sender] = { awaiting: 'delUser' };
-        return adminReply(sender, "Enter phone to delete:");
-      case '4':
-        adminSessions[sender] = { awaiting: 'addGroup' };
-        return adminReply(sender, "Enter group JID (e.g. 12345@g.us) to add:");
-      case '5':
-        return adminReply(
-          sender,
-          savedGroups.size
-            ? "Saved Groups:\n" + [...savedGroups].join('\n')
-            : "No groups saved."
-        );
-      case '6':
-        adminSessions[sender] = { awaiting: 'delGroup' };
-        return adminReply(sender, "Enter group JID to delete:");
-      case '7': case '8': case '9': {
-        const target = text === '7' ? 'users' : text === '8' ? 'groups' : 'all';
-        adminSessions[sender] = { awaiting: 'bulk', target };
-        return adminReply(sender, `Type the message to send to ${target}:`);
+    // handle edit:<key>
+    if (sess.awaiting?.startsWith('edit:')) {
+      const key = sess.awaiting.split(':')[1];
+      let val = txt;
+      if (key === 'channelID') {
+        const n = parseInt(txt);
+        if (isNaN(n)) return adminReply(from, "⚠️ Must be a number! Try again:");
+        val = n;
       }
-      case '10':
-        adminSessions[sender] = { awaiting: 'configMenu' };
-        return adminReply(
-`Config Bot Texts:
-1. Admin Label (${botConfig.fromAdmin})
-2. Welcome Message
-3. Deposit Prompt
-4. Payment Initiated
-5. Countdown Update
-6. Payment Success
-7. Payment Footer
-8. Channel ID (${botConfig.channelID})`
-        );
-      case '11':
-        adminSessions[sender] = { awaiting: 'addAdmin' };
-        return adminReply(sender, "Enter phone of new admin to add:");
-      case '12':
-        adminSessions[sender] = { awaiting: 'removeAdmin' };
-        return adminReply(sender, "Enter phone of admin to remove:");
-      default:
-        return showAdminMenu(sender);
+      botConfig[key] = val;
+      delete adminSessions[from];
+      return adminReply(from, `🎉 *Success!* Updated *${key}* to:\n${val}`);
     }
-  }
 
-  // ── DEPOSIT BOT FLOW ───────────────────────────
-  if (lower === 'start') {
-    conversations[sender] = { stage: 'awaitingAmount' };
-    return safeSend(sender, botConfig.welcomeMessage);
-  }
-  if (!conversations[sender]) {
-    conversations[sender] = { stage: 'awaitingAmount' };
-    return safeSend(sender, botConfig.welcomeMessage);
-  }
-  const conv = conversations[sender];
-
-  // Stage 1: amount
-  if (conv.stage === 'awaitingAmount') {
-    const amt = parseInt(text);
-    if (isNaN(amt) || amt <= 0) {
-      return safeSend(sender, "⚠️ Please enter a valid deposit amount in Ksh.");
+    // add user
+    if (sess.awaiting === 'addUser') {
+      const j = formatPhoneNumber(txt);
+      if (!j) return adminReply(from, "⚠️ Invalid phone. Retry:");
+      savedUsers.add(j);
+      delete adminSessions[from];
+      return adminReply(from, `✅ Added user: ${j}`);
     }
-    conv.amount = amt;
-    conv.stage  = 'awaitingDepositNumber';
-    return safeSend(sender, parsePlaceholders(botConfig.depositChosen, { amount: String(amt) }));
-  }
-
-  // Stage 2: deposit number
-  if (conv.stage === 'awaitingDepositNumber') {
-    conv.depositNumber = text;
-    conv.stage = 'processing';
-
-    const ref = await sendSTKPush(conv.amount, conv.depositNumber);
-    if (!ref) {
-      delete conversations[sender];
-      return safeSend(sender, "❌ Error initiating payment. Try again later.");
+    // delete user
+    if (sess.awaiting === 'delUser') {
+      const j = formatPhoneNumber(txt);
+      if (!j || !savedUsers.has(j)) return adminReply(from, "⚠️ Not found. Retry:");
+      savedUsers.delete(j);
+      delete adminSessions[from];
+      return adminReply(from, `🗑️ Removed user: ${j}`);
     }
-    conv.stkRef = ref;
+    // add group
+    if (sess.awaiting === 'addGroup') {
+      if (!txt.endsWith('@g.us')) return adminReply(from, "⚠️ Must end with @g.us:");
+      savedGroups.add(txt);
+      delete adminSessions[from];
+      return adminReply(from, `✅ Added group: ${txt}`);
+    }
+    // delete group
+    if (sess.awaiting === 'delGroup') {
+      if (!txt.endsWith('@g.us') || !savedGroups.has(txt)) return adminReply(from, "⚠️ Not found. Retry:");
+      savedGroups.delete(txt);
+      delete adminSessions[from];
+      return adminReply(from, `🗑️ Removed group: ${txt}`);
+    }
 
-    // notify admin
-    const now = new Date().toLocaleString("en-GB", { timeZone: "Africa/Nairobi" });
-    await safeSend(
-      SUPER_ADMIN,
-      `*${botConfig.fromAdmin}:* Deposit attempt:\n• Amount: Ksh ${conv.amount}\n• Number: ${conv.depositNumber}\n• Time: ${now}`
-    );
-
-    await safeSend(sender, parsePlaceholders(botConfig.paymentInitiated, { seconds: '20' }));
-
-    setTimeout(() => {
-      safeSend(sender, parsePlaceholders(botConfig.countdownUpdate, { seconds: '10' }));
-    }, 10000);
-
-    setTimeout(async () => {
-      const status = await fetchTransactionStatus(conv.stkRef);
-      const timestamp = new Date().toLocaleString("en-GB", { timeZone: "Africa/Nairobi" });
-      if (!status) {
-        delete conversations[sender];
-        return safeSend(sender, "❌ Error fetching status. Try again later.");
-      }
-      const st   = (status.status || '').toUpperCase();
-      const code = status.provider_reference || '';
-      const desc = status.ResultDesc || '';
-
-      if (st === 'SUCCESS') {
-        await safeSend(sender, parsePlaceholders(botConfig.paymentSuccess, {
-          amount: String(conv.amount),
-          depositNumber: conv.depositNumber,
-          mpesaCode: code,
-          date: timestamp
-        }));
-        await safeSend(
-          SUPER_ADMIN,
-          `*${botConfig.fromAdmin}:* Deposit success:\n• Amount: Ksh ${conv.amount}\n• Number: ${conv.depositNumber}\n• Code: ${code}\n• Time: ${timestamp}`
-        );
+    // bulk: enter message
+    if (sess.awaiting === 'bulk') {
+      sess.message = txt;
+      sess.awaiting = 'confirmBulk';
+      return adminReply(from,
+        `📝 *Preview*:\n"${txt}"\n\n1️⃣ Send to *${sess.target}*\n2️⃣ Cancel`
+      );
+    }
+    // bulk: confirm
+    if (sess.awaiting === 'confirmBulk') {
+      if (txt === '1') {
+        const payload = `*${botConfig.fromAdmin}:*\n${sess.message}`;
+        if (sess.target==='users'||sess.target==='all')
+          for (let u of savedUsers) await safeSend(u, payload);
+        if (sess.target==='groups'||sess.target==='all')
+          for (let g of savedGroups) await safeSend(g, payload);
+        delete adminSessions[from];
+        return adminReply(from, "🎉 Bulk send *completed*!");
       } else {
-        let err = 'Please try again.';
-        if (/insufficient/i.test(desc)) err = 'Insufficient funds.';
-        if (/pin/i.test(desc))        err = 'Incorrect PIN.';
-        await safeSend(sender, `❌ Payment ${st}. ${err}\nType Start to retry.`);
-        await safeSend(
-          SUPER_ADMIN,
-          `*${botConfig.fromAdmin}:* Deposit failed:\n• Amount: Ksh ${conv.amount}\n• Number: ${conv.depositNumber}\n• Error: ${err}\n• Time: ${timestamp}`
-        );
+        delete adminSessions[from];
+        return adminReply(from, "❌ Bulk send *cancelled*.");
       }
-      delete conversations[sender];
-    }, 20000);
+    }
 
+    // add admin
+    if (sess.awaiting === 'addAdmin') {
+      if (from !== SUPER_ADMIN) {
+        delete adminSessions[from];
+        return adminReply(from, "⚠️ Only super-admin can add admins.");
+      }
+      const j = formatPhoneNumber(txt);
+      if (!j) return adminReply(from, "⚠️ Invalid phone. Retry:");
+      adminUsers.add(j);
+      delete adminSessions[from];
+      return adminReply(from, `✅ New admin added: ${j}`);
+    }
+    // remove admin
+    if (sess.awaiting === 'removeAdmin') {
+      if (from !== SUPER_ADMIN) {
+        delete adminSessions[from];
+        return adminReply(from, "⚠️ Only super-admin can remove admins.");
+      }
+      const j = formatPhoneNumber(txt);
+      if (!j||!adminUsers.has(j)||j===SUPER_ADMIN) {
+        return adminReply(from, "⚠️ Cannot remove that admin. Retry:");
+      }
+      adminUsers.delete(j);
+      delete adminSessions[from];
+      return adminReply(from, `🗑️ Admin removed: ${j}`);
+    }
+
+    // no pending → main menu choice
+    switch (txt) {
+      case '1': adminSessions[from]={awaiting:'addUser'};    return adminReply(from,"📱 Enter phone to add:");
+      case '2': return adminReply(from,
+                  savedUsers.size ? "👥 Users:\n"+[...savedUsers].join('\n') : "No users.");
+      case '3': adminSessions[from]={awaiting:'delUser'};    return adminReply(from,"📱 Enter phone to delete:");
+      case '4': adminSessions[from]={awaiting:'addGroup'};   return adminReply(from,"🙌 Enter group JID:");
+      case '5': return adminReply(from,
+                  savedGroups.size ? "👥 Groups:\n"+[...savedGroups].join('\n') : "No groups.");
+      case '6': adminSessions[from]={awaiting:'delGroup'};   return adminReply(from,"📱 Enter group JID to delete:");
+      case '7':
+      case '8':
+      case '9':
+        adminSessions[from]={awaiting:'bulk',
+          target: txt==='7'?'users':txt==='8'?'groups':'all'};
+        return adminReply(from,"📝 Enter message for bulk send:");
+      case '10': adminSessions[from]={awaiting:'configMenu'};return adminReply(from,
+`⚙️ Config Bot Texts:
+1 Admin Label
+2 Welcome Msg
+3 Deposit Prompt
+4 Payment Init
+5 Countdown
+6 Success Msg
+7 Payment Footer
+8 Channel ID`
+      );
+      case '11': adminSessions[from]={awaiting:'addAdmin'};   return adminReply(from,"👤 Enter phone for new admin:");
+      case '12': adminSessions[from]={awaiting:'removeAdmin'};return adminReply(from,"🗑️ Enter phone of admin to remove:");
+      default:   return showAdminMenu(from);
+    }
+  }
+
+  // ─── USER DEPOSIT FLOW ─────────────────────
+  if (lc === 'start') {
+    conversations[from] = { stage:'awaitingAmount' };
+    return safeSend(from, botConfig.welcomeMessage);
+  }
+  if (!conversations[from]) {
+    conversations[from] = { stage:'awaitingAmount' };
+    return safeSend(from, botConfig.welcomeMessage);
+  }
+  const conv = conversations[from];
+
+  // amount entered
+  if (conv.stage==='awaitingAmount') {
+    const a = parseInt(txt);
+    if (isNaN(a)||a<=0) {
+      return safeSend(from,"⚠️ Enter a valid number in Ksh.");
+    }
+    conv.amount=a; conv.stage='awaitingDepositNumber';
+    return safeSend(from,parsePlaceholders(botConfig.depositChosen,{amount:String(a)}));
+  }
+  // deposit number
+  if (conv.stage==='awaitingDepositNumber') {
+    conv.depositNumber=txt; conv.stage='processing';
+    const ref=await sendSTKPush(conv.amount,conv.depositNumber);
+    if(!ref){ delete conversations[from]; return safeSend(from,"❌ Error initiating payment. Try later."); }
+    conv.stkRef=ref;
+    const now=new Date().toLocaleString("en-GB",{timeZone:"Africa/Nairobi"});
+    await safeSend(SUPER_ADMIN,
+      `📥 Attempt: Ksh ${conv.amount}, #${conv.depositNumber}, at ${now}`
+    );
+    await safeSend(from,parsePlaceholders(botConfig.paymentInitiated,{seconds:'20'}));
+    setTimeout(()=>safeSend(from,parsePlaceholders(botConfig.countdownUpdate,{seconds:'10'})),10000);
+    setTimeout(async()=>{
+      const status=await fetchTransactionStatus(conv.stkRef);
+      const ts=new Date().toLocaleString("en-GB",{timeZone:"Africa/Nairobi"});
+      if(!status){ delete conversations[from]; return safeSend(from,"❌ Error fetching status."); }
+      const st=(status.status||'').toUpperCase(),
+            code=status.provider_reference||'', desc=status.ResultDesc||'';
+      if(st==='SUCCESS'){
+        await safeSend(from,parsePlaceholders(botConfig.paymentSuccess,{
+          amount:String(conv.amount),
+          depositNumber:conv.depositNumber,
+          mpesaCode:code,
+          date:ts
+        }));
+        await safeSend(SUPER_ADMIN,`✅ Success: Ksh ${conv.amount}, #${conv.depositNumber}, code ${code}, at ${ts}`);
+      } else {
+        let err='Please try again.';
+        if(/insufficient/i.test(desc)) err='Insufficient funds.';
+        if(/pin/i.test(desc)) err='Incorrect PIN.';
+        await safeSend(from,`❌ Payment ${st}. ${err}\nType *Start* to retry.`);
+        await safeSend(SUPER_ADMIN,`❌ Failed: Ksh ${conv.amount}, #${conv.depositNumber}, err ${err}, at ${ts}`);
+      }
+      delete conversations[from];
+    },20000);
     return;
   }
 });
@@ -493,65 +371,35 @@ client.on('message', async message => {
 /***********************************************************
  * EXPRESS SERVER (QR Dashboard)
  ***********************************************************/
-const app = express();
-const port = process.env.PORT || 3000;
-
-app.get('/', async (req, res) => {
-  let qrImg = '';
-  if (currentQR) {
-    try { qrImg = await QRCode.toDataURL(currentQR); } catch {}
+const app = express(), port = process.env.PORT||3000;
+app.get('/', async (req,res)=>{
+  let qrImg='';
+  if(currentQR){
+    try{ qrImg=await QRCode.toDataURL(currentQR); }catch{}
   }
   res.send(`
 <!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>FY'S PROPERTY Bot QR</title>
-  <style>
-    body, html {
-      height: 100%; margin:0; display:flex;
-      justify-content:center; align-items:center;
-      background: url('https://images.unsplash.com/photo-1503023345310-bd7c1de61c7d') no-repeat center/cover;
-      font-family: Arial, sans-serif;
-    }
-    .glass {
-      background: rgba(255,255,255,0.2);
-      border-radius: 16px;
-      padding: 2rem;
-      max-width: 320px;
-      width: 90%;
-      text-align: center;
-      backdrop-filter: blur(10px);
-      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
-    }
-    .glass h1 {
-      margin-bottom: 1rem;
-      color: #fff;
-      text-shadow: 0 2px 4px rgba(0,0,0,0.5);
-    }
-    .qr-box img {
-      width: 100%;
-      max-width: 250px;
-    }
-    .footer {
-      margin-top: 1rem;
-      font-size: 0.9rem;
-      color: #eee;
-    }
-  </style>
-</head>
-<body>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FY'S PROPERTY Bot QR</title>
+<style>
+  html,body{height:100%;margin:0;display:flex;align-items:center;justify-content:center;
+    background:url('https://images.unsplash.com/photo-1503023345310-bd7c1de61c7d')no-repeat center/cover;
+    font-family:Arial,sans-serif;}
+  .glass{backdrop-filter:blur(10px);background:rgba(255,255,255,0.2);
+    padding:2rem;border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,0.2);max-width:320px;width:90%;text-align:center;}
+  .glass h1{color:#fff;text-shadow:0 2px 4px rgba(0,0,0,0.5);margin-bottom:1rem;}
+  .qr-box img{width:100%;max-width:250px;}
+  .footer{margin-top:1rem;color:#eee;font-size:0.9rem;}
+</style>
+</head><body>
   <div class="glass">
     <h1>Scan to Connect</h1>
     <div class="qr-box">
-      ${ qrImg ? `<img src="${qrImg}" alt="QR Code">` : '<p style="color:#fff;">Waiting for QR…</p>' }
+      ${qrImg?`<img src="${qrImg}">`:'<p style="color:#fff;">Waiting for QR…</p>'}
     </div>
     <div class="footer">Created By FY'S PROPERTY</div>
   </div>
-</body>
-</html>`);
+</body></html>`);
 });
-
-app.listen(port, () => console.log(`Express running on port ${port}`));
+app.listen(port,()=>console.log(`Express on port ${port}`));
 client.initialize();
