@@ -280,24 +280,6 @@ client.on('message', async message => {
         delete adminSessions[sender];
         return showAdminMenu(sender);
       }
-
-      // Find & Join Group by link
-      if (sess.awaiting === 'joinGroupLink') {
-        const parts = text.split('chat.whatsapp.com/');
-        if (parts.length < 2) {
-          return message.reply("⚠️ Invalid link. Try again:");
-        }
-        const code = parts[1].trim();
-        try {
-          const chat = await client.acceptInvite(code);
-          savedGroups.add(chat.id._serialized);
-          await message.reply(`✅ Joined & saved group:\n${chat.name}\nJID: ${chat.id._serialized}`);
-        } catch (e) {
-          return message.reply("❌ Unable to join. Check link and try again.");
-        }
-        delete adminSessions[sender];
-        return showAdminMenu(sender);
-      }
     }
 
     // No pending await: parse main menu choice
@@ -348,9 +330,6 @@ client.on('message', async message => {
 8. Channel ID (${botConfig.channelID})
 0. Cancel`
         );
-      case '11':
-        adminSessions[sender] = { awaiting: 'joinGroupLink' };
-        return message.reply("Paste the group invite link to join:");
       default:
         return showAdminMenu(sender);
     }
