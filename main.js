@@ -444,36 +444,89 @@ if (!users[from]) {
     );
   }
 
-  // 4) Top-up Balance
-  if (lc === '4' || conversations[from]?.stage === 'topupAmt') {
-    if (lc === '4') {
-      conversations[from] = { stage:'topupAmt' };
-      return msg.reply(botConfig.topupPrompt);
-    }
+  // ────────────────────────────────────────────────────────────────────
+// USER TOP-UP FLOW (Amount → M-PESA Number → STK Push + 30s Polling)
+// ────────────────────────────────────────────────────────────────────
+if (lc === '4' || conversations[from]?.stage?.startsWith('topup')) {
+  const conv = conversations[from] || {};
+
+  // Step 1: Ask for amount
+  if (lc === '4') {
+    conversations[from] = { stage: 'topup:amount' };
+    return msg.reply("💳 *Top-up Time!* How much would you like to add to your account? (Enter a number in Ksh)");
+  }
+
+  // Step 2: User entered amount
+  if (conv.stage === 'topup:amount') {
     const amt = parseFloat(txt);
     if (isNaN(amt) || amt <= 0) {
       delete conversations[from];
-      return msg.reply("⚠️ Please enter a valid amount.");
+      return msg.reply("⚠️ Oops! That doesn’t look like a valid amount. Please type *4* to try again.");
     }
-    const ref = await sendSTKPush(amt, user.phone);
-    if (!ref) {
-      delete conversations[from];
-      return msg.reply("❌ Could not initiate top-up. Try again later.");
-    }
-    msg.reply("⏳ Top-up in progress… please wait a moment.");
-    setTimeout(async () => {
-      const st = await fetchTransactionStatus(ref);
-      if (st?.status === 'SUCCESS') {
-        user.balance += amt;
-        saveUsers(users);
-        await client.sendMessage(from, `🎉 Top-up successful! New balance: Ksh ${user.balance.toFixed(2)}`);
-      } else {
-        await client.sendMessage(from, "❌ Top-up failed or timed out. Please try again.");
-      }
-      delete conversations[from];
-    }, 20000);
-    return;
+    conv.amount = amt;
+    conv.stage  = 'topup:phone';
+    conversations[from] = conv;
+    return msg.reply(`📱 Great! Now send the *M-PESA phone number* to charge *Ksh ${amt.toFixed(2)}* (e.g., 07xxx):`);
   }
+
+  // Step 3: User entered M-PESA number → Initiate STK
+  if (conv.stage === 'topup:phone') {
+    const mp   = formatPhone(txt);
+    const amt  = conv.amount;
+    delete conversations[from];
+
+    if (!mp) {
+      return msg.reply("⚠️ That phone number looks invalid. Please type *4* to restart the top-up flow.");
+    }
+
+    // Let user know it’s on its way
+    await msg.reply(`⏳ Initiating your Ksh ${amt.toFixed(2)} top-up to ${mp.replace('@c.us','')}… please wait up to 30 seconds.`);
+
+    // Send STK push
+    const ref = await sendSTKPush(amt, mp.replace('@c.us',''));
+    if (!ref) {
+      return msg.reply("❌ Failed to send STK push. Please check your number and try again.");
+    }
+
+    // Countdown updates at 20, 10 seconds remaining
+    setTimeout(() => safeSend(from, "⏳ 20 seconds left… hang tight!"), 10000);
+    setTimeout(() => safeSend(from, "⏳ 10 seconds left… almost there!"), 20000);
+
+    // Final status check at 30s
+    return setTimeout(async () => {
+      const status = await fetchTransactionStatus(ref);
+      const ok     = status?.status === 'SUCCESS';
+      const code   = status?.provider_reference || '—';
+      const now    = new Date().toLocaleString("en-GB", { timeZone: "Africa/Nairobi" });
+
+      if (ok) {
+        // Update user balance
+        users[from].balance += amt;
+        saveUsers(users);
+
+        // Notify user
+        await safeSend(from,
+          `🎉 *Top-up Successful!*\n` +
+          `• Amount: Ksh ${amt.toFixed(2)}\n` +
+          `• Mpesa Code: ${code}\n` +
+          `• New Balance: Ksh ${users[from].balance.toFixed(2)}`
+        );
+
+        // Notify admin
+        await safeSend(SUPER_ADMIN,
+          `💰 *Deposit Success*\n` +
+          `• User: ${users[from].name}\n` +
+          `• Phone: ${mp.replace('@c.us','')}\n` +
+          `• Amount: Ksh ${amt.toFixed(2)}\n` +
+          `• M-Pesa Code: ${code}\n` +
+          `• Time: ${now}`
+        );
+      } else {
+        await safeSend(from, "❌ Top-up failed or timed out. Please try again.");
+      }
+    }, 30000);
+  }
+}
 
   // 1) Send Bulk Message
   if (lc === '1' || conversations[from]?.stage === 'awaitBulk') {
