@@ -48,7 +48,7 @@ let botConfig = {
       `5️⃣ Check Balance\n` +
       `6️⃣ Contact Support\n` +
       `7️⃣ Delete My Account\n` +
-      `8️⃣ View Recipients\n` +
+      `8️⃣ View Recipients\n\n` +
       `Type 'menu' anytime to see this again.`
     );
   },
@@ -59,12 +59,12 @@ let botConfig = {
     return `⚠️ The message will cost *Ksh ${cost.toFixed(2)}*, but you only have *Ksh ${bal.toFixed(2)}*. Please top-up first.`;
   },
   topupPrompt:    "💳 How much would you like to top-up? (Enter a number in Ksh)",
-  closedSupport:  "✅ Your support ticket is now closed. Type `#close` anytime to open a new one.",
+  closedSupport:  "✅ Your support ticket is now closed. To open again, type `#close`.",
 };
 
-// Per-chat state
-const conversations = {};   // { jid: { stage, ... } }
-const adminSessions = {};   // { jid: { awaiting, step, target, ... } }
+// Per-chat and admin state
+const conversations = {};   // for user flows: { jid: { stage, ... } }
+const adminSessions = {};   // for admin flows: { jid: { awaiting, step, target } }
 
 // ────────────────────────────────────────────────────────────────────
 // 3) WHATSAPP CLIENT INIT
@@ -87,7 +87,7 @@ client.on('ready', () => {
 client.initialize();
 
 // ────────────────────────────────────────────────────────────────────
-// 4) EXPRESS QR DASHBOARD (GLASS-STYLE)
+// 4) EXPRESS QR DASHBOARD
 // ────────────────────────────────────────────────────────────────────
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -97,26 +97,18 @@ app.get('/', async (req,res) => {
     try { img = await QRCode.toDataURL(currentQR); } catch {}
   }
   res.send(`
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<!DOCTYPE html><html><head><meta charset="UTF-8">
 <title>FY'S PROPERTY Bot QR</title>
 <style>
-  html,body{height:100%;margin:0;display:flex;justify-content:center;align-items:center;
-    background:url('https://images.unsplash.com/photo-1503023345310-bd7c1de61c7d')center/cover;}
-  .glass{background:rgba(255,255,255,0.2);backdrop-filter:blur(10px);
-    padding:2rem;border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,0.2);
-    text-align:center;font-family:Arial,sans-serif;max-width:320px;width:90%;}
-  .glass h1{color:#fff;text-shadow:0 2px 4px rgba(0,0,0,0.5);}
-  .qr-box img{width:100%;max-width:250px;}
-  .footer{margin-top:1rem;color:#eee;font-size:0.9rem;}
+  body { margin:0; display:flex; justify-content:center; align-items:center;
+    height:100vh; background:#222; color:#fff; font-family:Arial,sans-serif; }
+  .qr { background:#fff; padding:1rem; border-radius:8px; text-align:center; }
+  .qr img{ width:200px; }
 </style>
 </head><body>
-  <div class="glass">
-    <h1>Scan to Connect</h1>
-    <div class="qr-box">
-      ${img ? `<img src="${img}">` : '<p style="color:#fff;">Waiting for QR…</p>'}
-    </div>
-    <div class="footer">Created By FY'S PROPERTY</div>
+  <div class="qr">
+    <h2>Scan to Connect</h2>
+    ${img ? `<img src="${img}">` : '<p>Waiting for QR…</p>'}
   </div>
 </body></html>
 `);
@@ -136,12 +128,11 @@ async function safeSend(jid,message) {
     }
   }
 }
-// Improved phone formatting
 function formatPhone(txt) {
   let n = txt.replace(/[^\d]/g,'');
-  if (n.length === 9 && n.startsWith('7'))       n = '254' + n;
-  if (n.length === 10 && n.startsWith('0'))      n = '254' + n.slice(1);
-  if (n.length === 12 && n.startsWith('254'))    return n + '@c.us';
+  if (n.length === 9  && n.startsWith('7'))  n = '254' + n;
+  if (n.length === 10 && n.startsWith('0'))  n = '254' + n.slice(1);
+  if (n.length === 12 && n.startsWith('254')) return n + '@c.us';
   return null;
 }
 async function adminReply(jid, msg) {
@@ -150,7 +141,7 @@ async function adminReply(jid, msg) {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// 6) ADMIN PANEL: MENUS & HANDLERS
+// 6) ADMIN PANEL MENUS
 // ────────────────────────────────────────────────────────────────────
 function showAdminMenu(jid) {
   adminSessions[jid] = { awaiting: 'main', step: null };
@@ -184,17 +175,17 @@ function showConfigMenu(jid) {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// 7) MESSAGE HANDLER (USER + ADMIN + SUPPORT)
+// 7) MESSAGE HANDLER
 // ────────────────────────────────────────────────────────────────────
 client.on('message', async msg => {
   const from = msg.from;
   const txt  = msg.body.trim();
   const lc   = txt.toLowerCase();
+
   if (from.endsWith('@g.us')) return; // ignore groups
 
-  // 7.1) SUPPORT TICKETS
+  // 7.1) SUPPORT TICKETS (user→admin)
   if (users[from]?.support?.open && !adminUsers.has(from)) {
-    // forward every incoming message to admin
     await safeSend(SUPER_ADMIN,
       `🎟 #${users[from].support.ticketId} from ${users[from].name}:\n"${txt}"`
     );
@@ -205,7 +196,6 @@ client.on('message', async msg => {
     saveUsers(users);
     return msg.reply(botConfig.closedSupport);
   }
-  // admin “reply” handled below...
 
   // 7.2) ADMIN FLOW
   if (adminUsers.has(from)) {
@@ -215,15 +205,15 @@ client.on('message', async msg => {
 
     const sess = adminSessions[from] || { awaiting:'main' };
 
-    // support‐reply shortcut
+    // support‐reply
     if (lc.startsWith('reply ')) {
       const [_, ticket, ...rest] = txt.split(' ');
       const content = rest.join(' ');
-      const target = Object.entries(users).find(([jid,u]) =>
+      const found = Object.entries(users).find(([jid,u]) =>
         u.support.open && u.support.ticketId === ticket
       );
-      if (target) {
-        const [jid,u] = target;
+      if (found) {
+        const [jid] = found;
         await safeSend(jid, `🛎 Support Reply:\n"${content}"`);
         return adminReply(from, `✅ Replied to ticket ${ticket}.`);
       } else {
@@ -231,7 +221,7 @@ client.on('message', async msg => {
       }
     }
 
-    // Main dispatch
+    // main menu dispatch
     if (sess.awaiting === 'main') {
       switch(txt) {
         case '1': sess.awaiting='viewUsers';   return adminReply(from,"👥 Fetching all users...");
@@ -245,7 +235,7 @@ client.on('message', async msg => {
       }
     }
 
-    // Submenus
+    // submenus
     switch(sess.awaiting) {
       // 1) View All Users
       case 'viewUsers': {
@@ -372,9 +362,52 @@ client.on('message', async msg => {
 
       // 7) Config submenu
       case 'config':
-        // ... same as before ...
-        delete adminSessions[from];
-        return showConfigMenu(from);
+        // First time: pick which text to edit
+        if (!sess.step) {
+          switch(txt) {
+            case '1': sess.step='editAdmin';       return adminReply(from,"✏️ Enter new Admin Label:");
+            case '2': sess.step='editWelcome';     return adminReply(from,"✏️ Enter new Welcome Text:");
+            case '3': sess.step='editAskName';     return adminReply(from,"✏️ Enter new Ask-Name Text:");
+            case '4': sess.step='editRegSuccess';  return adminReply(from,"✏️ Enter new Registration Success Text (use {name}):");
+            case '5': sess.step='editUserMenu';    return adminReply(from,"✏️ Enter new User Menu Text (use {name}):");
+            case '6': sess.step='editNotEnough';   return adminReply(from,"✏️ Enter new Not-Enough-Balance Text (use {cost},{bal}):");
+            case '7': sess.step='editTopupPrompt'; return adminReply(from,"✏️ Enter new Top-up Prompt:");
+            case '8': sess.step='editCost';        return adminReply(from,"✏️ Enter new costPerChar:");
+            case '9': sess.step='editChannel';     return adminReply(from,"✏️ Enter new Channel ID:");
+            case '0': delete adminSessions[from];  return showAdminMenu(from);
+            default: return adminReply(from,"⚠️ Invalid option. Returning to Config menu.");
+          }
+        } else {
+          // apply the edit
+          switch(sess.step) {
+            case 'editAdmin':
+              botConfig.fromAdmin = txt; break;
+            case 'editWelcome':
+              botConfig.welcomeText = txt; break;
+            case 'editAskName':
+              botConfig.askNameText = txt; break;
+            case 'editRegSuccess':
+              botConfig.regSuccess = name => txt.replace('{name}', name); break;
+            case 'editUserMenu':
+              botConfig.userMenu = user => txt.replace('{name}', user.name||''); break;
+            case 'editNotEnough':
+              botConfig.notEnoughBal = (cost,bal) =>
+                txt.replace('{cost}', cost.toFixed(2)).replace('{bal}', bal.toFixed(2));
+              break;
+            case 'editTopupPrompt':
+              botConfig.topupPrompt = txt; break;
+            case 'editCost':
+              const c = parseFloat(txt);
+              if (!isNaN(c) && c>0) botConfig.costPerChar = c;
+              break;
+            case 'editChannel':
+              const ch = parseInt(txt);
+              if (!isNaN(ch)) botConfig.channelID = ch;
+              break;
+          }
+          delete adminSessions[from];
+          return adminReply(from,"✅ Configuration updated.");
+        }
 
       default:
         delete adminSessions[from];
@@ -395,7 +428,7 @@ client.on('message', async msg => {
       const jid = formatPhone(txt);
       if (!jid) {
         delete conversations[from];
-        return msg.reply("⚠️ That doesn't look like a phone number. Please start over.");
+        return msg.reply("⚠️ That doesn't look like a phone number. Please start again.");
       }
       users[from] = {
         phone: jid.replace('@c.us',''),
@@ -407,7 +440,7 @@ client.on('message', async msg => {
         messageCount: 0,
         totalCharges: 0,
         recipients: [],
-        support: { open: false, ticketId: null }
+        support: { open:false, ticketId:null }
       };
       saveUsers(users);
       conversations[from].stage = 'awaitName';
@@ -433,17 +466,11 @@ client.on('message', async msg => {
     return msg.reply(`🚫 You are banned.\nReason: ${user.banReason}`);
   }
 
-  // Quick menu
-  if (lc === 'menu') {
-    return msg.reply(botConfig.userMenu(user));
-  }
+  // If in an ongoing user flow, resume it:
+  const conv = conversations[from] || {};
 
-  // 7) Delete My Account
-  if (lc === '7' || lc === 'delete my account') {
-    conversations[from] = { stage:'confirmDelete' };
-    return msg.reply("⚠️ Are you sure you want to delete your account? Type 'yes' to confirm or 'no' to cancel.");
-  }
-  if (conversations[from]?.stage === 'confirmDelete') {
+  // 7️⃣ Delete My Account
+  if (conv.stage === 'confirmDelete') {
     delete conversations[from];
     if (lc === 'yes') {
       delete users[from];
@@ -453,23 +480,24 @@ client.on('message', async msg => {
       return msg.reply("✅ Deletion cancelled." + botConfig.userMenu(user));
     }
   }
-
-  // 6) Contact Support
-  if (lc === '6') {
-    if (!user.support.open) {
-      user.support.open     = true;
-      user.support.ticketId = Date.now().toString().slice(-6);
-      saveUsers(users);
-      return msg.reply(
-        `🆘 Support opened (#${user.support.ticketId}).\n` +
-        `Please type your message now. To close: type \`#close\`.`
-      );
-    }
-    return msg.reply("🆘 Support is open. To close: type `#close`.");
+  if (lc === '7' || lc === 'delete my account') {
+    conversations[from] = { stage:'confirmDelete' };
+    return msg.reply("⚠️ Are you sure you want to delete your account? Type 'yes' to confirm or 'no' to cancel.");
   }
 
-  // 5) Check Balance
-  if (lc === '5') {
+  // 6️⃣ Contact Support
+  if (!conv.stage && (lc === '6')) {
+    user.support.open = true;
+    user.support.ticketId = Date.now().toString().slice(-6);
+    saveUsers(users);
+    return msg.reply(
+      `🆘 Support opened (#${user.support.ticketId}).\n` +
+      `Type your message now. To close: type \`#close\`.`
+    );
+  }
+
+  // 5️⃣ Check Balance
+  if (!conv.stage && lc === '5') {
     return msg.reply(
       `💰 Your balance: Ksh ${user.balance.toFixed(2)}\n` +
       `✉️ Messages sent: ${user.messageCount}\n` +
@@ -477,78 +505,149 @@ client.on('message', async msg => {
     );
   }
 
-  // USER TOP-UP FLOW (min Ksh 11)
-  if (lc === '4' || conversations[from]?.stage?.startsWith('topup')) {
-    // ... same as before ...
+  // 4️⃣ Top-up Flow (min Ksh 11)
+  if (lc === '4' && !conv.stage) {
+    conversations[from] = { stage:'topup:amount' };
+    return msg.reply(botConfig.topupPrompt);
+  }
+  if (conv.stage === 'topup:amount') {
+    const amt = parseFloat(txt);
+    if (isNaN(amt) || amt < 11) {
+      delete conversations[from];
+      return msg.reply("⚠️ Minimum top-up is Ksh 11. Type '4' to try again.");
+    }
+    conv.amount = amt;
+    conv.stage = 'topup:phone';
+    return msg.reply(`📱 Send the M-PESA number to charge Ksh ${amt.toFixed(2)}:`);
+  }
+  if (conv.stage === 'topup:phone') {
+    const mp = formatPhone(txt);
+    const amt = conv.amount;
+    delete conversations[from];
+    if (!mp) {
+      return msg.reply("⚠️ Invalid phone. Type '4' to restart.");
+    }
+    await msg.reply(`⏳ Initiating Ksh ${amt.toFixed(2)} top-up to ${mp.replace('@c.us','')}…`);
+    const ref = await sendSTKPush(amt, mp.replace('@c.us',''));
+    if (!ref) return msg.reply("❌ STK push failed. Try again.");
+
+    setTimeout(() => safeSend(from,"⏳ 20s left…"),10000);
+    setTimeout(() => safeSend(from,"⏳ 10s left…"),20000);
+
+    return setTimeout(async () => {
+      const st = await fetchTransactionStatus(ref);
+      const ok = st?.status==='SUCCESS';
+      const code = st?.provider_reference||'—';
+      const now = new Date().toLocaleString("en-GB",{timeZone:"Africa/Nairobi"});
+      if (ok) {
+        user.balance += amt;
+        saveUsers(users);
+        await safeSend(from,
+          `🎉 *Top-up Successful!*\n` +
+          `• Amount: Ksh ${amt.toFixed(2)}\n` +
+          `• Code: ${code}\n` +
+          `• New Balance: Ksh ${user.balance.toFixed(2)}`
+        );
+        await safeSend(SUPER_ADMIN,
+          `💰 *Deposit Success*\n` +
+          `• User: ${user.name}\n` +
+          `• Phone: ${mp.replace('@c.us','')}\n` +
+          `• Amount: Ksh ${amt.toFixed(2)}\n` +
+          `• Code: ${code}\n` +
+          `• Time: ${now}`
+        );
+      } else {
+        await safeSend(from,"❌ Top-up failed or timed out. Please try again.");
+      }
+    },30000);
   }
 
-  // 1) Send Bulk Message
-  if (lc === '1' || conversations[from]?.stage === 'awaitBulk') {
-    // ... same as before ...
+  // 1️⃣ Send Bulk Message
+  if (lc === '1' && !conv.stage) {
+    conversations[from] = { stage:'awaitBulk' };
+    return msg.reply("✏️ Please type the message you want to send:");
+  }
+  if (conv.stage === 'awaitBulk') {
+    conv.message = txt;
+    conv.stage = 'confirmBulk';
+    return msg.reply(
+      `📝 Preview:\n"${txt}"\nCost: Ksh ${(txt.length*botConfig.costPerChar).toFixed(2)}\n` +
+      `Type 'yes' to send or 'no' to cancel.`
+    );
+  }
+  if (conv.stage === 'confirmBulk') {
+    delete conversations[from];
+    const cost = conv.message.length * botConfig.costPerChar;
+    if (lc === 'yes') {
+      for (let r of user.recipients) await safeSend(r, conv.message);
+      user.balance -= cost;
+      user.messageCount++;
+      user.totalCharges += cost;
+      saveUsers(users);
+      return msg.reply(`✅ Message sent! Ksh ${cost.toFixed(2)} deducted. New bal: Ksh ${user.balance.toFixed(2)}`);
+    } else {
+      return msg.reply("❌ Bulk send cancelled." + botConfig.userMenu(user));
+    }
   }
 
-  // 2) Add Recipient
-  if (lc === '2') {
+  // 2️⃣ Add Recipient
+  if (lc === '2' && !conv.stage) {
     conversations[from] = { stage:'addRec' };
     return msg.reply("📥 Enter the phone number of the recipient to add:");
   }
-  if (conversations[from]?.stage === 'addRec') {
-    const jid = formatPhone(txt);
+  if (conv.stage === 'addRec') {
     delete conversations[from];
+    const jid = formatPhone(txt);
     if (!jid) {
-      return msg.reply("⚠️ Invalid phone number. Try again." + botConfig.userMenu(user));
+      return msg.reply("⚠️ Invalid phone number." + botConfig.userMenu(user));
     }
     if (!user.recipients.includes(jid)) {
       user.recipients.push(jid);
       saveUsers(users);
-      return msg.reply(`✅ Recipient ${jid} added.` + botConfig.userMenu(user));
+      return msg.reply(`✅ Recipient ${jid.replace('@c.us','')} added.` + botConfig.userMenu(user));
     } else {
       return msg.reply("⚠️ Already in your list." + botConfig.userMenu(user));
     }
   }
 
-  // 3) Remove Recipient
-  if (lc === '3') {
-    conversations[from] = { stage:'delRec', target: null };
+  // 3️⃣ Remove Recipient
+  if (lc === '3' && !conv.stage) {
+    conversations[from] = { stage:'delRec', target:null };
     return msg.reply("🗑️ Enter the phone number of the recipient to remove:");
   }
-  if (conversations[from]?.stage === 'delRec' && !conversations[from].target) {
+  if (conv.stage==='delRec' && !conv.target) {
     const jid = formatPhone(txt);
     if (!jid || !user.recipients.includes(jid)) {
       delete conversations[from];
       return msg.reply("⚠️ That number is not in your list." + botConfig.userMenu(user));
     }
-    // ask confirm
-    conversations[from] = { stage:'delRec', target: jid };
-    return msg.reply(
-      `⚠️ Are you sure you want to remove ${jid}? Type 'yes' to confirm or 'no' to cancel.`
-    );
+    conv.target = jid;
+    return msg.reply(`⚠️ Remove ${jid.replace('@c.us','')}? Type 'yes' to confirm or 'no' to cancel.`);
   }
-  if (conversations[from]?.stage === 'delRec' && conversations[from].target) {
-    const { target } = conversations[from];
+  if (conv.stage==='delRec' && conv.target) {
     delete conversations[from];
-    if (lc === 'yes') {
-      user.recipients = user.recipients.filter(r => r !== target);
+    if (lc==='yes') {
+      user.recipients = user.recipients.filter(r=>r!==conv.target);
       saveUsers(users);
-      return msg.reply(`🗑️ Recipient ${target} removed.` + botConfig.userMenu(user));
+      return msg.reply(`🗑️ Recipient ${conv.target.replace('@c.us','')} removed.` + botConfig.userMenu(user));
     } else {
       return msg.reply("✅ Removal cancelled." + botConfig.userMenu(user));
     }
   }
 
-  // 8) View Recipients
-  if (lc === '8') {
+  // 8️⃣ View Recipients
+  if (lc === '8' && !conv.stage) {
     if (user.recipients.length === 0) {
       return msg.reply("ℹ️ You have no recipients yet." + botConfig.userMenu(user));
     }
-    let list = "📋 Your Recipients:\n";
-    user.recipients.forEach((r,i) => {
+    let list = "📋 Your Recipients:";
+    user.recipients.forEach((r,i)=> {
       list += `\n${i+1}. ${r.replace('@c.us','')}`;
     });
     return msg.reply(list + botConfig.userMenu(user));
   }
 
-  // Default
+  // Default: show menu
   return msg.reply(botConfig.userMenu(user));
 });
 
@@ -556,8 +655,48 @@ client.on('message', async msg => {
 // 8) M-PESA STK PUSH & STATUS CHECK
 // ────────────────────────────────────────────────────────────────────
 async function sendSTKPush(amount, phone) {
-  // ... unchanged ...
+  const payload = {
+    amount, phone_number: phone,
+    channel_id: botConfig.channelID,
+    provider: "m-pesa",
+    external_reference: "INV-009",
+    customer_name: "FY'S PROPERTY User",
+    callback_url: "https://your-callback-url",
+    account_reference: "FY'S PROPERTY",
+    transaction_desc: "FY'S PROPERTY Payment",
+    remarks: "FY'S PROPERTY",
+    business_name: "FY'S PROPERTY",
+    companyName: "FY'S PROPERTY"
+  };
+  try {
+    const res = await axios.post(
+      'https://backend.payhero.co.ke/api/v2/payments',
+      payload,
+      { headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6c2lYb09taHRYSlFMbWZ0dFdqeGp4SG13NDFTekJLckl2Z2NWd2F1aw=='
+        }
+      }
+    );
+    return res.data.reference;
+  } catch (err) {
+    console.error("STK Push Error:", err.message);
+    return null;
+  }
 }
+
 async function fetchTransactionStatus(ref) {
-  // ... unchanged ...
+  try {
+    const res = await axios.get(
+      `https://backend.payhero.co.ke/api/v2/transaction-status?reference=${encodeURIComponent(ref)}`,
+      { headers: {
+          'Authorization': 'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6c2lYb09taHRYSlFMbWZ0dFdqeGp4SG13NDFTekJLckl2Z2NWd2F1aw=='
+        }
+      }
+    );
+    return res.data;
+  } catch (err) {
+    console.error("Fetch Status Error:", err.message);
+    return null;
+  }
 }
