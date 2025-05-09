@@ -537,9 +537,10 @@ client.on('message', async msg => {
   }
 
   // 3) Remove Recipient
+    // 3) Remove Recipient
   if (lc === '3' || conversations[from]?.stage === 'delRec') {
     if (lc === '3') {
-      conversations[from] = { stage:'delRec' };
+      conversations[from] = { stage: 'delRec' };
       return msg.reply("🗑️ Enter recipient phone number to remove:");
     }
     const jid = formatPhone(txt);
@@ -554,7 +555,8 @@ client.on('message', async msg => {
 
   // Default → show menu
   return msg.reply(botConfig.userMenu(user));
-});
+});  // <— closes client.on('message')
+
 
 // ────────────────────────────────────────────────────────────────────
 // 8) M-PESA STK PUSH & STATUS CHECK
@@ -613,4 +615,7 @@ async function fetchTransactionStatus(ref) {
 function formatPhone(txt) {
   let n = txt.replace(/[^\d]/g,'');
   if (n.length === 9 && n.startsWith('7'))       n = '254' + n;
-  if (n.length === 10 && n.startsWith('0'))
+  if (n.length === 10 && n.startsWith('0'))      n = '254' + n.slice(1);
+  if (n.length === 12 && n.startsWith('254'))    return n + '@c.us';
+  return null;
+}
