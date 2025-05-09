@@ -82,7 +82,7 @@ client.on('ready', () => {
 client.initialize();
 
 // ────────────────────────────────────────────────────────────────────
-// 4) EXPRESS QR DASHBOARD (BEAUTIFUL)
+// 4) EXPRESS QR DASHBOARD (BEAUTIFUL & SCANNABLE)
 // ────────────────────────────────────────────────────────────────────
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -96,45 +96,72 @@ app.get("/", async (req, res) => {
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>FY'S PROPERTY Bot QR</title>
-<style>
-  body {
-    margin: 0; padding: 0;
-    background: linear-gradient(135deg,#667eea,#764ba2);
-    font-family: Arial, sans-serif;
-    color: #fff;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 100vh;
-  }
-  .container {
-    text-align: center;
-    background: rgba(255,255,255,0.1);
-    padding: 2rem;
-    border-radius: 12px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.2);
-  }
-  h1 { margin-bottom: 1rem; }
-  img {
-    width: 250px; height: 250px;
-    border: 4px solid rgba(255,255,255,0.5);
-    border-radius: 12px;
-  }
-  p { font-size: 1.2rem; }
-</style>
+  <meta charset="UTF-8">
+  <title>FY'S PROPERTY Bot QR</title>
+  <style>
+    body, html {
+      margin: 0; padding: 0;
+      width: 100%; height: 100%;
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      font-family: 'Segoe UI', Tahoma, sans-serif;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .card {
+      background: rgba(255,255,255,0.1);
+      padding: 2rem;
+      border-radius: 16px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+      text-align: center;
+      max-width: 360px;
+      width: 90%;
+    }
+    h1 {
+      margin-bottom: 1rem;
+      font-size: 1.8rem;
+    }
+    .qr {
+      width: 250px; height: 250px;
+      margin: 1rem auto;
+      background: #fff;
+      padding: 8px;
+      border-radius: 12px;
+    }
+    .qr img {
+      width: 100%; height: 100%;
+    }
+    p.instructions {
+      font-size: 1rem;
+      margin-top: 1rem;
+      line-height: 1.4;
+    }
+    p.instructions span {
+      display: block;
+      margin-top: 0.5rem;
+      font-weight: bold;
+    }
+  </style>
 </head>
 <body>
-  <div class="container">
-    <h1>Scan to Connect</h1>
-    ${img ? `<img src="${img}" alt="QR Code">` : '<p>Waiting for QR…</p>'}
+  <div class="card">
+    <h1>Connect Your WhatsApp</h1>
+    <div class="qr">
+      ${img ? `<img src="${img}" alt="QR Code">` : '<p>Loading QR…</p>'}
+    </div>
+    <p class="instructions">
+      Open WhatsApp on your phone,<br>
+      tap <strong>Settings → Linked Devices</strong>,<br>
+      and scan this QR code.
+      <span>FY'S PROPERTY Bot</span>
+    </p>
   </div>
 </body>
 </html>`);
 });
 
-app.listen(PORT, ()=>console.log(`🌐 QR dashboard: http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`🌐 QR dashboard: http://localhost:${PORT}`));
 
 // ────────────────────────────────────────────────────────────────────
 // 5) HELPERS
@@ -294,7 +321,7 @@ client.on("message", async msg => {
       }
       case "rmvAdmin": {
         const jid=formatPhone(txt);
-        if(!jid||!adminUsers.has(jid)||jid===SUPER_ADMIN){
+        if (!jid||!adminUsers.has(jid)||jid===SUPER_ADMIN) {
           delete adminSessions[from]; return adminReply(from,"⚠️ Cannot remove that admin.");
         }
         adminUsers.delete(jid); delete adminSessions[from];
@@ -391,7 +418,7 @@ client.on("message", async msg => {
       `💸 Charges: ${user.totalCharges.toFixed(2)}`
     );
   }
-  // VIEW RECIPIENTS
+  // 8) View Recipients
   if (lc === "8") {
     if (!user.recipients.length) {
       return msg.reply("📋 You have no recipients. Use option 2 to add.");
@@ -540,7 +567,4 @@ async function fetchTransactionStatus(ref) {
     );
     return res.data;
   } catch (err) {
-    console.error("Fetch Status Error:", err.message);
-    return null;
-  }
-}
+    console.error(
