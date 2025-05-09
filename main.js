@@ -356,43 +356,62 @@ client.on('message', async msg => {
     return;
   }
 
-  // 7.3) USER REGISTRATION FLOW
-  if (!users[from]) {
-    if (!conversations[from]) {
-      conversations[from] = { stage:'awaitPhone' };
-      return msg.reply(botConfig.welcomeText);
-    }
-    const conv = conversations[from];
-    if (conv.stage === 'awaitPhone') {
-      const jid = formatPhone(txt);
-      if (!jid) {
-        delete conversations[from];
-        return msg.reply("⚠️ That doesn't look like a phone number. Try again.");
-      }
-      users[from] = {
-        phone:     jid.replace('@c.us',''),
-        name:      '',
-        registeredAt: new Date().toISOString(),
-        balance:   0,
-        banned:    false,
-        banReason: '',
-        messageCount:0,
-        totalCharges:0,
-        recipients:[],
-        support:   { open:false, ticketId:null }
-      };
-      saveUsers(users);
-      conv.stage = 'awaitName';
-      return msg.reply(botConfig.askNameText);
-    }
-    if (conv.stage === 'awaitName') {
-      users[from].name = txt;
-      saveUsers(users);
-      delete conversations[from];
-      return msg.reply(botConfig.regSuccess(users[from].name));
-    }
-    return;
+  // ────────────────────────────────────────────────────────────────────
+// 7.3) USER REGISTRATION FLOW (Fixed)
+// ────────────────────────────────────────────────────────────────────
+if (!users[from]) {
+  if (!conversations[from]) {
+    // Step 1: ask for phone
+    conversations[from] = { stage: 'awaitPhone' };
+    return msg.reply(botConfig.welcomeText);
   }
+
+  const conv = conversations[from];
+
+  if (conv.stage === 'awaitPhone') {
+    // User sent their phone
+    const jid = formatPhone(txt);
+    if (!jid) {
+      delete conversations[from];
+      return msg.reply("⚠️ That doesn't look like a phone number. Please start again.");
+    }
+    users[from] = {
+      phone: jid.replace('@c.us',''),
+      name: '',
+      registeredAt: new Date().toISOString(),
+      balance: 0,
+      banned: false,
+      banReason: '',
+      messageCount: 0,
+      totalCharges: 0,
+      recipients: [],
+      support: { open: false, ticketId: null }
+    };
+    saveUsers(users);
+
+    // Move to asking name
+    conversations[from].stage = 'awaitName';
+    return msg.reply(botConfig.askNameText);
+  }
+
+  if (conv.stage === 'awaitName') {
+    // User sent their name
+    users[from].name = txt;
+    saveUsers(users);
+
+    // Notify super‐admin of new registration
+    await safeSend(SUPER_ADMIN,
+      `🆕 *New Registration*\n• Name: ${users[from].name}\n• Phone: ${users[from].phone}`
+    );
+
+    // Clean up and send success to user
+    delete conversations[from];
+    return msg.reply(botConfig.regSuccess(users[from].name));
+  }
+
+  // If somehow still in registration, stop here
+  return;
+}
 
   // 7.4) REGISTERED USER MAIN FLOW
   const user = users[from];
