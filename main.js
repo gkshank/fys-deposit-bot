@@ -44,7 +44,7 @@ let botConfig = {
       `5️⃣ Check Balance\n` +
       `6️⃣ Contact Support\n` +
       `7️⃣ Delete My Account\n` +
-      `8️⃣ View My Recipients\n` +
+      `8️⃣ View Recipients\n` +
       `Type 'menu' anytime to see this again.`;
   },
   regSuccess(name) {
@@ -82,7 +82,7 @@ client.on('ready', () => {
 client.initialize();
 
 // ────────────────────────────────────────────────────────────────────
-// 4) EXPRESS QR DASHBOARD (BEAUTIFUL & SCANNABLE)
+// 4) EXPRESS QR DASHBOARD
 // ────────────────────────────────────────────────────────────────────
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -94,74 +94,31 @@ app.get("/", async (req, res) => {
   }
   res.send(`
 <!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>FY'S PROPERTY Bot QR</title>
-  <style>
-    body, html {
-      margin: 0; padding: 0;
-      width: 100%; height: 100%;
-      background: linear-gradient(135deg, #667eea, #764ba2);
-      font-family: 'Segoe UI', Tahoma, sans-serif;
-      color: #fff;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .card {
-      background: rgba(255,255,255,0.1);
-      padding: 2rem;
-      border-radius: 16px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-      text-align: center;
-      max-width: 360px;
-      width: 90%;
-    }
-    h1 {
-      margin-bottom: 1rem;
-      font-size: 1.8rem;
-    }
-    .qr {
-      width: 250px; height: 250px;
-      margin: 1rem auto;
-      background: #fff;
-      padding: 8px;
-      border-radius: 12px;
-    }
-    .qr img {
-      width: 100%; height: 100%;
-    }
-    p.instructions {
-      font-size: 1rem;
-      margin-top: 1rem;
-      line-height: 1.4;
-    }
-    p.instructions span {
-      display: block;
-      margin-top: 0.5rem;
-      font-weight: bold;
-    }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1>Connect Your WhatsApp</h1>
-    <div class="qr">
-      ${img ? `<img src="${img}" alt="QR Code">` : '<p>Loading QR…</p>'}
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FY'S PROPERTY Bot QR</title>
+<style>
+  body,html{height:100%;margin:0;font-family:Arial,sans-serif;
+    background:url('https://images.unsplash.com/photo-1522199710521-72d69614c702')center/cover;}
+  .glass{margin:auto;background:rgba(255,255,255,0.15);backdrop-filter:blur(8px);
+    padding:2rem;border-radius:12px;max-width:320px;text-align:center;color:#fff;
+    box-shadow:0 4px 30px rgba(0,0,0,0.1);}
+  .glass h1{margin-bottom:1rem;text-shadow:0 2px 4px rgba(0,0,0,0.5);}
+  .qr-box img{width:100%;height:auto;border:2px solid #fff;border-radius:8px;}
+  .footer{margin-top:1rem;font-size:0.8rem;color:#ddd;}
+</style>
+</head><body>
+  <div class="glass">
+    <h1>Scan to Connect</h1>
+    <div class="qr-box">
+      ${img? `<img src="${img}" alt="QR code">` : '<p>Waiting for QR…</p>'}
     </div>
-    <p class="instructions">
-      Open WhatsApp on your phone,<br>
-      tap <strong>Settings → Linked Devices</strong>,<br>
-      and scan this QR code.
-      <span>FY'S PROPERTY Bot</span>
-    </p>
+    <div class="footer">Created by FY'S PROPERTY BOT</div>
   </div>
-</body>
-</html>`);
+</body></html>`);
 });
 
-app.listen(PORT, () => console.log(`🌐 QR dashboard: http://localhost:${PORT}`));
+app.listen(PORT, ()=>console.log(`🌐 QR dashboard: http://localhost:${PORT}`));
 
 // ────────────────────────────────────────────────────────────────────
 // 5) HELPERS
@@ -228,131 +185,151 @@ function showConfigMenu(jid) {
 // ────────────────────────────────────────────────────────────────────
 client.on("message", async msg => {
   const from = msg.from, txt = msg.body.trim(), lc = txt.toLowerCase();
+
+  // ignore group chats
   if (from.endsWith("@g.us")) return;
 
+  // -------------------
   // ADMIN FLOWS
+  // -------------------
   if (adminUsers.has(from)) {
     if (txt === "00") { delete adminSessions[from]; return showAdminMenu(from); }
     if (txt === "0")  { delete adminSessions[from]; return adminReply(from, "🔙 Back"); }
+
     const sess = adminSessions[from] || {};
     if (!sess.awaiting || sess.awaiting === "main") {
       switch (txt) {
-        case "1": sess.awaiting="viewUsers"; return adminReply(from,"👥 Fetching all users...");
-        case "2": sess.awaiting="chgCost";   return adminReply(from,"💱 Enter new costPerChar:");
-        case "3": sess.awaiting="modBal"; sess.step=null; return adminReply(from,"💰 Enter user phone:");
-        case "4": sess.awaiting="banUser"; sess.step=null; return adminReply(from,"🚫 Enter user phone:");
-        case "5": sess.awaiting="bulkAll"; sess.step=null; return adminReply(from,"📝 Enter message for ALL users:");
-        case "6": sess.awaiting="addAdmin"; sess.step=null; return adminReply(from,"➕ Enter phone of new admin:");
-        case "7": sess.awaiting="rmvAdmin"; sess.step=null; return adminReply(from,"❌ Enter phone of admin to remove:");
-        case "8": return adminReply(from,`🌐 Dash board: http://localhost:${PORT}`);
+        case "1": sess.awaiting = "viewUsers";  return adminReply(from, "👥 Fetching all users...");
+        case "2": sess.awaiting = "chgCost";    return adminReply(from, "💱 Enter new costPerChar:");
+        case "3": sess.awaiting = "modBal"; sess.step = null; return adminReply(from, "💰 Enter user phone:");
+        case "4": sess.awaiting = "banUser"; sess.step = null; return adminReply(from, "🚫 Enter user phone:");
+        case "5": sess.awaiting = "bulkAll"; sess.step = null; return adminReply(from, "📝 Enter message for ALL users:");
+        case "6": sess.awaiting = "addAdmin"; sess.step = null; return adminReply(from, "➕ Enter phone of new admin:");
+        case "7": sess.awaiting = "rmvAdmin"; sess.step = null; return adminReply(from, "❌ Enter phone of admin to remove:");
+        case "8": return adminReply(from, `🌐 Dash board: http://localhost:${PORT}`);
         case "9": return showConfigMenu(from);
-        default:  return showAdminMenu(from);
+        default:   return showAdminMenu(from);
       }
     }
+
     switch (sess.awaiting) {
       case "viewUsers": {
-        let out="👥 Registered Users:\n";
-        for (let [jid,u] of Object.entries(users)) {
-          out+=`\n• ${u.name} (${u.phone})\n  Bal:${u.balance.toFixed(2)}|Sent:${u.messageCount}|Charges:${u.totalCharges}\n  Banned:${u.banned?`Yes(${u.banReason})`:"No"}\n`;
+        let out = "👥 Registered Users:\n";
+        for (let [jid, u] of Object.entries(users)) {
+          out += `\n• ${u.name} (${u.phone})\n  Bal: ${u.balance.toFixed(2)} | Sent: ${u.messageCount} | Charges: ${u.totalCharges.toFixed(2)}\n  Banned: ${u.banned?`Yes(${u.banReason})`:"No"}\n`;
         }
         delete adminSessions[from];
-        return adminReply(from,out);
+        return adminReply(from, out);
       }
       case "chgCost": {
-        const k=parseFloat(txt);
-        if (isNaN(k)||k<=0) return adminReply(from,"⚠️ Invalid number.");
-        botConfig.costPerChar=k;
+        const k = parseFloat(txt);
+        if (isNaN(k) || k <= 0) return adminReply(from, "⚠️ Invalid number.");
+        botConfig.costPerChar = k;
         delete adminSessions[from];
-        return adminReply(from,`🎉 costPerChar set to ${k.toFixed(2)}`);
+        return adminReply(from, `🎉 costPerChar set to ${k.toFixed(2)}`);
       }
       case "modBal": {
-        if (!sess.step) { sess.step="getUser"; return adminReply(from,"📱 Enter user phone:"); }
-        if (sess.step==="getUser") {
-          const jid=formatPhone(txt);
-          if (!jid||!users[jid]){ delete adminSessions[from]; return adminReply(from,"⚠️ User not found."); }
-          sess.target=jid; sess.step="getAmt"; return adminReply(from,"💰 Enter +amount or -amount:");
+        if (!sess.step) {
+          sess.step = "getUser"; return adminReply(from, "📱 Enter user phone:");
         }
-        if (sess.step==="getAmt") {
-          const amt=parseFloat(txt);
-          if (isNaN(amt)) return adminReply(from,"⚠️ Invalid amount.");
-          users[sess.target].balance+=amt; saveUsers(users);
+        if (sess.step === "getUser") {
+          const jid = formatPhone(txt);
+          if (!jid || !users[jid]) { delete adminSessions[from]; return adminReply(from, "⚠️ User not found."); }
+          sess.target = jid; sess.step = "getAmt";
+          return adminReply(from, "💰 Enter +amount or -amount:");
+        }
+        if (sess.step === "getAmt") {
+          const amt = parseFloat(txt);
+          if (isNaN(amt)) return adminReply(from, "⚠️ Invalid amount.");
+          users[sess.target].balance += amt;
+          saveUsers(users);
           delete adminSessions[from];
-          return adminReply(from,`✅ ${users[sess.target].name}'s balance updated.`);
+          return adminReply(from, `✅ ${users[sess.target].name}'s balance updated.`);
         }
         break;
       }
       case "banUser": {
-        if (!sess.step) { sess.step="getUser"; return adminReply(from,"📱 Enter user phone:"); }
-        if (sess.step==="getUser") {
-          const jid=formatPhone(txt);
-          if (!jid||!users[jid]){ delete adminSessions[from]; return adminReply(from,"⚠️ User not found."); }
-          sess.target=jid;
-          if (users[jid].banned) {
-            users[jid].banned=false; users[jid].banReason="";
-            saveUsers(users); delete adminSessions[from];
-            return adminReply(from,`✅ ${users[jid].name} unbanned.`);
-          }
-          sess.step="getReason"; return adminReply(from,"✏️ Enter ban reason:");
+        if (!sess.step) {
+          sess.step = "getUser"; return adminReply(from, "📱 Enter user phone:");
         }
-        if (sess.step==="getReason") {
-          users[sess.target].banned=true; users[sess.target].banReason=txt;
-          saveUsers(users); delete adminSessions[from];
-          return adminReply(from,`🚫 ${users[sess.target].name} banned: ${txt}`);
+        if (sess.step === "getUser") {
+          const jid = formatPhone(txt);
+          if (!jid || !users[jid]) { delete adminSessions[from]; return adminReply(from, "⚠️ User not found."); }
+          sess.target = jid;
+          if (users[jid].banned) {
+            users[jid].banned = false; users[jid].banReason = "";
+            saveUsers(users);
+            delete adminSessions[from];
+            return adminReply(from, `✅ ${users[jid].name} unbanned.`);
+          }
+          sess.step = "getReason"; return adminReply(from, "✏️ Enter ban reason:");
+        }
+        if (sess.step === "getReason") {
+          users[sess.target].banned = true;
+          users[sess.target].banReason = txt;
+          saveUsers(users);
+          delete adminSessions[from];
+          return adminReply(from, `🚫 ${users[sess.target].name} banned: ${txt}`);
         }
         break;
       }
       case "bulkAll": {
-        if (!sess.step) { sess.step="getMsg"; return adminReply(from,"📝 Enter message for ALL users:"); }
-        if (sess.step==="getMsg") {
-          const m=txt;
+        if (!sess.step) {
+          sess.step = "getMsg"; return adminReply(from, "📝 Enter message to send to ALL users:");
+        }
+        if (sess.step === "getMsg") {
+          const m = txt;
           for (let jid of Object.keys(users)) {
             await safeSend(jid, `${botConfig.fromAdmin}: ${m}`);
           }
           delete adminSessions[from];
-          return adminReply(from,"🎉 Message sent to all users!");
+          return adminReply(from, "🎉 Message sent to all users!");
         }
         break;
       }
       case "addAdmin": {
-        const jid=formatPhone(txt);
-        if (!jid) { delete adminSessions[from]; return adminReply(from,"⚠️ Invalid phone."); }
-        adminUsers.add(jid); delete adminSessions[from];
-        return adminReply(from,`➕ ${jid} is now an admin.`);
+        const jid = formatPhone(txt);
+        if (!jid) { delete adminSessions[from]; return adminReply(from, "⚠️ Invalid phone."); }
+        adminUsers.add(jid);
+        delete adminSessions[from];
+        return adminReply(from, `➕ ${jid} is now an admin.`);
       }
       case "rmvAdmin": {
-        const jid=formatPhone(txt);
-        if (!jid||!adminUsers.has(jid)||jid===SUPER_ADMIN) {
-          delete adminSessions[from]; return adminReply(from,"⚠️ Cannot remove that admin.");
+        const jid = formatPhone(txt);
+        if (!jid || !adminUsers.has(jid) || jid === SUPER_ADMIN) {
+          delete adminSessions[from];
+          return adminReply(from, "⚠️ Cannot remove that admin.");
         }
-        adminUsers.delete(jid); delete adminSessions[from];
-        return adminReply(from,`❌ ${jid} removed from admins.`);
+        adminUsers.delete(jid);
+        delete adminSessions[from];
+        return adminReply(from, `❌ ${jid} removed from admins.`);
       }
       case "config": {
         if (!sess.step) {
-          switch(txt){
-            case "1": sess.step="editAdmin";       return adminReply(from,"✏️ Enter new Admin Label:");
-            case "2": sess.step="editWelcome";     return adminReply(from,"✏️ Enter new Welcome Text:");
-            case "3": sess.step="editRegSuccess";  return adminReply(from,"✏️ Enter new Registration Success Text:");
-            case "4": sess.step="editUserMenu";    return adminReply(from,"✏️ Enter new User Menu Text (use {name}):");
-            case "5": sess.step="editNotEnough";   return adminReply(from,"✏️ Enter new Not-Enough-Balance Text:");
-            case "6": sess.step="editTopupPrompt"; return adminReply(from,"✏️ Enter new Top-up Prompt:");
-            case "7": sess.step="editCost";        return adminReply(from,"✏️ Enter new costPerChar:");
-            case "8": sess.step="editSupport";     return adminReply(from,"✏️ Enter new Support Info Text:");
-            case "9": sess.step="editChannelID";   return adminReply(from,"✏️ Enter new Channel ID:");
-            case "0": delete adminSessions[from];  return showAdminMenu(from);
+          switch (txt) {
+            case "1": sess.step="editAdmin";      return adminReply(from,"✏️ Enter new Admin Label:");
+            case "2": sess.step="editWelcome";    return adminReply(from,"✏️ Enter new Welcome Text:");
+            case "3": sess.step="editRegSuccess"; return adminReply(from,"✏️ Enter new Registration Success Text:");
+            case "4": sess.step="editUserMenu";   return adminReply(from,"✏️ Enter new User Menu Text (use {name}):");
+            case "5": sess.step="editNotEnough";  return adminReply(from,"✏️ Enter new Not-Enough-Balance Text:");
+            case "6": sess.step="editTopupPrompt";return adminReply(from,"✏️ Enter new Top-up Prompt:");
+            case "7": sess.step="editCost";       return adminReply(from,"✏️ Enter new costPerChar:");
+            case "8": sess.step="editSupport";    return adminReply(from,"✏️ Enter new Support Info Text:");
+            case "9": sess.step="editChannelID";  return adminReply(from,"✏️ Enter new Channel ID:");
+            case "0": delete adminSessions[from]; return showAdminMenu(from);
             default:   return adminReply(from,"⚠️ Invalid option.");
           }
         } else {
-          switch(sess.step){
-            case "editAdmin":      botConfig.fromAdmin   = txt; break;
-            case "editWelcome":    botConfig.welcomeText = txt; break;
-            case "editRegSuccess": botConfig.regSuccess  = name=>txt.replace("{name}",name); break;
-            case "editUserMenu":   botConfig.userMenu    = u=>txt.replace("{name}",u.name||""); break;
-            case "editNotEnough":  botConfig.notEnoughBal= (c,b)=>txt.replace("{cost}",c).replace("{bal}",b); break;
-            case "editTopupPrompt":botConfig.topupPrompt = txt; break;
-            case "editCost":       botConfig.costPerChar = parseFloat(txt)||botConfig.costPerChar; break;
-            case "editSupport":    botConfig.supportText = txt; break;
-            case "editChannelID":  botConfig.channelID   = parseInt(txt)||botConfig.channelID; break;
+          switch (sess.step) {
+            case "editAdmin":      botConfig.fromAdmin    = txt; break;
+            case "editWelcome":    botConfig.welcomeText  = txt; break;
+            case "editRegSuccess": botConfig.regSuccess   = name=>txt.replace("{name}",name); break;
+            case "editUserMenu":   botConfig.userMenu     = u=>txt.replace("{name}",u.name||""); break;
+            case "editNotEnough":  botConfig.notEnoughBal = (c,b)=>txt.replace("{cost}",c).replace("{bal}",b); break;
+            case "editTopupPrompt":botConfig.topupPrompt  = txt; break;
+            case "editCost":       botConfig.costPerChar  = parseFloat(txt)||botConfig.costPerChar; break;
+            case "editSupport":    botConfig.supportText  = txt; break;
+            case "editChannelID":  botConfig.channelID    = parseInt(txt)||botConfig.channelID; break;
           }
           delete adminSessions[from];
           return adminReply(from,"✅ Configuration updated.");
@@ -364,7 +341,9 @@ client.on("message", async msg => {
     }
   }
 
+  // -------------------
   // USER REGISTRATION
+  // -------------------
   if (!users[from]) {
     if (!conversations[from]) {
       conversations[from] = { stage: "awaitRegister" };
@@ -396,7 +375,9 @@ client.on("message", async msg => {
     return;
   }
 
+  // -------------------
   // REGISTERED USER FLOW
+  // -------------------
   const user = users[from];
   if (user.banned) {
     return msg.reply(`🚫 You are banned.\nReason: ${user.banReason}`);
@@ -420,12 +401,12 @@ client.on("message", async msg => {
   }
   // 8) View Recipients
   if (lc === "8") {
-    if (!user.recipients.length) {
+    if (user.recipients.length === 0) {
       return msg.reply("📋 You have no recipients. Use option 2 to add.");
     }
-    let list = "📋 Your Recipients:\n";
-    user.recipients.forEach((r,i)=> list += `\n${i+1}. ${r.replace("@c.us","")}`);
-    return msg.reply(list);
+    return msg.reply(
+      "📋 Your Recipients:\n" + user.recipients.map(r=>r.replace("@c.us","")).join("\n")
+    );
   }
 
   // USER TOP-UP FLOW
@@ -519,7 +500,7 @@ client.on("message", async msg => {
     return msg.reply(`🗑️ Recipient ${jid} removed.`);
   }
 
-  // default
+  // default: show menu
   return msg.reply(botConfig.userMenu(user));
 });
 
@@ -567,4 +548,4 @@ async function fetchTransactionStatus(ref) {
     );
     return res.data;
   } catch (err) {
-    console.error(
+    console.error("Fetch Status Error:", err.message);
