@@ -81,10 +81,14 @@ client.on('ready', () => {
 client.initialize();
 
 // ────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────
 // 4) EXPRESS QR DASHBOARD (GLASS MORPHISM)
 // ────────────────────────────────────────────────────────────────────
-app.get('/', async (req, res) => {
-  let imgData = '';
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get("/", async (req, res) => {
+  let imgData = "";
   if (currentQR) {
     try { imgData = await QRCode.toDataURL(currentQR) } catch {}
   }
@@ -135,8 +139,9 @@ app.get('/', async (req, res) => {
       <div class="glass">
         <h1>Scan to Connect</h1>
         <div class="qr-box">
-          ${ imgData ? `<img src="${imgData}" alt="Bot QR Code">`
-                     : '<p style="color:#fff;">Waiting for QR…</p>' }
+          ${ imgData
+             ? `<img src="${imgData}" alt="Bot QR Code">`
+             : '<p style="color:#fff;">Waiting for QR…</p>' }
         </div>
         <div class="footer">Powered by FY’S PROPERTY BOT</div>
       </div>
@@ -145,8 +150,7 @@ app.get('/', async (req, res) => {
   `);
 });
 
-
-app.listen(PORT, ()=>console.log(`🌐 QR dashboard: http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`🌐 QR dashboard: http://localhost:${PORT}`));
 
 // ────────────────────────────────────────────────────────────────────
 // 5) HELPERS
