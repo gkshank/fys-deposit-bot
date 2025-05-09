@@ -520,12 +520,12 @@ client.on('message', async msg => {
         return msg.reply(botConfig.notEnoughBal(cost, user.balance));
       }
       conversations[from] = { stage:'confirmBulk', message };
-      return msg.reply(
-        `📝 Preview:\n"${message}"\nCost: Ksh ${cost.toFixed(2)}\n1️⃣ Confirm Send  2️⃣ Cancel`
+      return msg.reply
+        `📝 Preview:\n"${message}"\nCost: Ksh ${cost.toFixed(2)}\nYes to Confirm \nNo* to Cancel`
       );
     }
     if (conversations[from].stage === 'confirmBulk') {
-      if (txt === '1') {
+      if (txt === 'Yes') {
         const message = conversations[from].message;
         delete conversations[from];
         const cost = message.length * botConfig.costPerChar;
