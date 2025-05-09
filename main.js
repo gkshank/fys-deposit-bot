@@ -44,7 +44,6 @@ let botConfig = {
       `5️⃣ Check Balance\n` +
       `6️⃣ Contact Support\n` +
       `7️⃣ Delete My Account\n` +
-      `8️⃣ View Recipients\n` +
       `Type 'menu' anytime to see this again.`;
   },
   regSuccess(name) {
@@ -82,41 +81,70 @@ client.on('ready', () => {
 client.initialize();
 
 // ────────────────────────────────────────────────────────────────────
-// 4) EXPRESS QR DASHBOARD
+// 4) EXPRESS QR DASHBOARD (GLASS MORPHISM)
 // ────────────────────────────────────────────────────────────────────
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-app.get("/", async (req, res) => {
-  let img = "";
+app.get('/', async (req, res) => {
+  let imgData = '';
   if (currentQR) {
-    try { img = await QRCode.toDataURL(currentQR) } catch {}
+    try { imgData = await QRCode.toDataURL(currentQR) } catch {}
   }
   res.send(`
-<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FY'S PROPERTY Bot QR</title>
-<style>
-  body,html{height:100%;margin:0;font-family:Arial,sans-serif;
-    background:url('https://images.unsplash.com/photo-1522199710521-72d69614c702')center/cover;}
-  .glass{margin:auto;background:rgba(255,255,255,0.15);backdrop-filter:blur(8px);
-    padding:2rem;border-radius:12px;max-width:320px;text-align:center;color:#fff;
-    box-shadow:0 4px 30px rgba(0,0,0,0.1);}
-  .glass h1{margin-bottom:1rem;text-shadow:0 2px 4px rgba(0,0,0,0.5);}
-  .qr-box img{width:100%;height:auto;border:2px solid #fff;border-radius:8px;}
-  .footer{margin-top:1rem;font-size:0.8rem;color:#ddd;}
-</style>
-</head><body>
-  <div class="glass">
-    <h1>Scan to Connect</h1>
-    <div class="qr-box">
-      ${img? `<img src="${img}" alt="QR code">` : '<p>Waiting for QR…</p>'}
-    </div>
-    <div class="footer">Created by FY'S PROPERTY BOT</div>
-  </div>
-</body></html>`);
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      <title>FY'S PROPERTY Bot QR</title>
+      <style>
+        body {
+          margin: 0; height: 100vh;
+          background: url('https://images.unsplash.com/photo-1503023345310-bd7c1de61c7d?auto=format&fit=crop&w=1500&q=80') center/cover no-repeat;
+          display: flex; align-items: center; justify-content: center;
+          font-family: Arial, sans-serif;
+        }
+        .glass {
+          background: rgba(255,255,255,0.2);
+          backdrop-filter: blur(12px);
+          border-radius: 16px;
+          padding: 2rem;
+          text-align: center;
+          box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+          max-width: 360px;
+          width: 90%;
+        }
+        .glass h1 {
+          margin-bottom: 1rem;
+          color: #fff;
+          text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+        .qr-box img {
+          width: 100%;
+          max-width: 240px;
+          border-radius: 8px;
+          background: #fff;
+          padding: 0.5rem;
+        }
+        .footer {
+          margin-top: 1rem;
+          color: rgba(255,255,255,0.8);
+          font-size: 0.9rem;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="glass">
+        <h1>Scan to Connect</h1>
+        <div class="qr-box">
+          ${ imgData ? `<img src="${imgData}" alt="Bot QR Code">`
+                     : '<p style="color:#fff;">Waiting for QR…</p>' }
+        </div>
+        <div class="footer">Powered by FY’S PROPERTY BOT</div>
+      </div>
+    </body>
+    </html>
+  `);
 });
+
 
 app.listen(PORT, ()=>console.log(`🌐 QR dashboard: http://localhost:${PORT}`));
 
@@ -186,17 +214,18 @@ function showConfigMenu(jid) {
 client.on("message", async msg => {
   const from = msg.from, txt = msg.body.trim(), lc = txt.toLowerCase();
 
-  // ignore group chats
+  // ignore groups
   if (from.endsWith("@g.us")) return;
 
-  // -------------------
   // ADMIN FLOWS
-  // -------------------
   if (adminUsers.has(from)) {
+    // global back/menu
     if (txt === "00") { delete adminSessions[from]; return showAdminMenu(from); }
     if (txt === "0")  { delete adminSessions[from]; return adminReply(from, "🔙 Back"); }
 
     const sess = adminSessions[from] || {};
+
+    // main dispatch
     if (!sess.awaiting || sess.awaiting === "main") {
       switch (txt) {
         case "1": sess.awaiting = "viewUsers";  return adminReply(from, "👥 Fetching all users...");
@@ -208,11 +237,13 @@ client.on("message", async msg => {
         case "7": sess.awaiting = "rmvAdmin"; sess.step = null; return adminReply(from, "❌ Enter phone of admin to remove:");
         case "8": return adminReply(from, `🌐 Dash board: http://localhost:${PORT}`);
         case "9": return showConfigMenu(from);
-        default:   return showAdminMenu(from);
+        default:  return showAdminMenu(from);
       }
     }
 
+    // submenu handlers
     switch (sess.awaiting) {
+      // 1) View all users
       case "viewUsers": {
         let out = "👥 Registered Users:\n";
         for (let [jid, u] of Object.entries(users)) {
@@ -221,6 +252,7 @@ client.on("message", async msg => {
         delete adminSessions[from];
         return adminReply(from, out);
       }
+      // 2) Change costPerChar
       case "chgCost": {
         const k = parseFloat(txt);
         if (isNaN(k) || k <= 0) return adminReply(from, "⚠️ Invalid number.");
@@ -228,9 +260,11 @@ client.on("message", async msg => {
         delete adminSessions[from];
         return adminReply(from, `🎉 costPerChar set to ${k.toFixed(2)}`);
       }
+      // 3) Top-up/Deduct user
       case "modBal": {
         if (!sess.step) {
-          sess.step = "getUser"; return adminReply(from, "📱 Enter user phone:");
+          sess.step = "getUser";
+          return adminReply(from, "📱 Enter user phone:");
         }
         if (sess.step === "getUser") {
           const jid = formatPhone(txt);
@@ -248,6 +282,7 @@ client.on("message", async msg => {
         }
         break;
       }
+      // 4) Ban/unban user
       case "banUser": {
         if (!sess.step) {
           sess.step = "getUser"; return adminReply(from, "📱 Enter user phone:");
@@ -273,9 +308,11 @@ client.on("message", async msg => {
         }
         break;
       }
+      // 5) Bulk all
       case "bulkAll": {
         if (!sess.step) {
-          sess.step = "getMsg"; return adminReply(from, "📝 Enter message to send to ALL users:");
+          sess.step = "getMsg";
+          return adminReply(from, "📝 Enter message to send to ALL users:");
         }
         if (sess.step === "getMsg") {
           const m = txt;
@@ -287,6 +324,7 @@ client.on("message", async msg => {
         }
         break;
       }
+      // 6) Add admin
       case "addAdmin": {
         const jid = formatPhone(txt);
         if (!jid) { delete adminSessions[from]; return adminReply(from, "⚠️ Invalid phone."); }
@@ -294,6 +332,7 @@ client.on("message", async msg => {
         delete adminSessions[from];
         return adminReply(from, `➕ ${jid} is now an admin.`);
       }
+      // 7) Remove admin
       case "rmvAdmin": {
         const jid = formatPhone(txt);
         if (!jid || !adminUsers.has(jid) || jid === SUPER_ADMIN) {
@@ -304,32 +343,33 @@ client.on("message", async msg => {
         delete adminSessions[from];
         return adminReply(from, `❌ ${jid} removed from admins.`);
       }
+      // 9) Config submenu
       case "config": {
         if (!sess.step) {
           switch (txt) {
-            case "1": sess.step="editAdmin";      return adminReply(from,"✏️ Enter new Admin Label:");
-            case "2": sess.step="editWelcome";    return adminReply(from,"✏️ Enter new Welcome Text:");
-            case "3": sess.step="editRegSuccess"; return adminReply(from,"✏️ Enter new Registration Success Text:");
-            case "4": sess.step="editUserMenu";   return adminReply(from,"✏️ Enter new User Menu Text (use {name}):");
-            case "5": sess.step="editNotEnough";  return adminReply(from,"✏️ Enter new Not-Enough-Balance Text:");
-            case "6": sess.step="editTopupPrompt";return adminReply(from,"✏️ Enter new Top-up Prompt:");
-            case "7": sess.step="editCost";       return adminReply(from,"✏️ Enter new costPerChar:");
-            case "8": sess.step="editSupport";    return adminReply(from,"✏️ Enter new Support Info Text:");
-            case "9": sess.step="editChannelID";  return adminReply(from,"✏️ Enter new Channel ID:");
-            case "0": delete adminSessions[from]; return showAdminMenu(from);
+            case "1": sess.step="editAdmin";       return adminReply(from,"✏️ Enter new Admin Label:");
+            case "2": sess.step="editWelcome";     return adminReply(from,"✏️ Enter new Welcome Text:");
+            case "3": sess.step="editRegSuccess";  return adminReply(from,"✏️ Enter new Registration Success Text:");
+            case "4": sess.step="editUserMenu";    return adminReply(from,"✏️ Enter new User Menu Text (use {name}):");
+            case "5": sess.step="editNotEnough";   return adminReply(from,"✏️ Enter new Not-Enough-Balance Text:");
+            case "6": sess.step="editTopupPrompt"; return adminReply(from,"✏️ Enter new Top-up Prompt:");
+            case "7": sess.step="editCost";        return adminReply(from,"✏️ Enter new costPerChar:");
+            case "8": sess.step="editSupport";     return adminReply(from,"✏️ Enter new Support Info Text:");
+            case "9": sess.step="editChannelID";   return adminReply(from,"✏️ Enter new Channel ID:");
+            case "0": delete adminSessions[from];  return showAdminMenu(from);
             default:   return adminReply(from,"⚠️ Invalid option.");
           }
         } else {
           switch (sess.step) {
-            case "editAdmin":      botConfig.fromAdmin    = txt; break;
-            case "editWelcome":    botConfig.welcomeText  = txt; break;
-            case "editRegSuccess": botConfig.regSuccess   = name=>txt.replace("{name}",name); break;
-            case "editUserMenu":   botConfig.userMenu     = u=>txt.replace("{name}",u.name||""); break;
-            case "editNotEnough":  botConfig.notEnoughBal = (c,b)=>txt.replace("{cost}",c).replace("{bal}",b); break;
-            case "editTopupPrompt":botConfig.topupPrompt  = txt; break;
-            case "editCost":       botConfig.costPerChar  = parseFloat(txt)||botConfig.costPerChar; break;
-            case "editSupport":    botConfig.supportText  = txt; break;
-            case "editChannelID":  botConfig.channelID    = parseInt(txt)||botConfig.channelID; break;
+            case "editAdmin":      botConfig.fromAdmin   = txt; break;
+            case "editWelcome":    botConfig.welcomeText = txt; break;
+            case "editRegSuccess": botConfig.regSuccess  = name=>txt.replace("{name}",name); break;
+            case "editUserMenu":   botConfig.userMenu    = u=>txt.replace("{name}",u.name||""); break;
+            case "editNotEnough":  botConfig.notEnoughBal= (c,b)=>txt.replace("{cost}",c).replace("{bal}",b); break;
+            case "editTopupPrompt":botConfig.topupPrompt = txt; break;
+            case "editCost":       botConfig.costPerChar = parseFloat(txt)||botConfig.costPerChar; break;
+            case "editSupport":    botConfig.supportText = txt; break;
+            case "editChannelID":  botConfig.channelID   = parseInt(txt)||botConfig.channelID; break;
           }
           delete adminSessions[from];
           return adminReply(from,"✅ Configuration updated.");
@@ -341,9 +381,7 @@ client.on("message", async msg => {
     }
   }
 
-  // -------------------
   // USER REGISTRATION
-  // -------------------
   if (!users[from]) {
     if (!conversations[from]) {
       conversations[from] = { stage: "awaitRegister" };
@@ -375,9 +413,7 @@ client.on("message", async msg => {
     return;
   }
 
-  // -------------------
   // REGISTERED USER FLOW
-  // -------------------
   const user = users[from];
   if (user.banned) {
     return msg.reply(`🚫 You are banned.\nReason: ${user.banReason}`);
@@ -397,15 +433,6 @@ client.on("message", async msg => {
       `💰 Balance: Ksh ${user.balance.toFixed(2)}\n`+
       `✉️ Sent: ${user.messageCount}\n`+
       `💸 Charges: ${user.totalCharges.toFixed(2)}`
-    );
-  }
-  // 8) View Recipients
-  if (lc === "8") {
-    if (user.recipients.length === 0) {
-      return msg.reply("📋 You have no recipients. Use option 2 to add.");
-    }
-    return msg.reply(
-      "📋 Your Recipients:\n" + user.recipients.map(r=>r.replace("@c.us","")).join("\n")
     );
   }
 
@@ -549,3 +576,6 @@ async function fetchTransactionStatus(ref) {
     return res.data;
   } catch (err) {
     console.error("Fetch Status Error:", err.message);
+    return null;
+  }
+}
