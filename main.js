@@ -155,6 +155,7 @@ function showConfigMenu(jid) {
 6. Edit Top-up Prompt
 7. Edit costPerChar
 8. Edit Support Text
+9. Edit Channel ID
 0. Back`;
   return adminReply(jid, cfg);
 }
@@ -268,7 +269,7 @@ client.on("message", async msg => {
         if (sess.step === "getMsg") {
           const m = txt;
           for (let jid of Object.keys(users)) {
-            await safeSend(jid, m);
+            await safeSend(jid, `${botConfig.fromAdmin}: ${m}`);
           }
           delete adminSessions[from];
           return adminReply(from, "🎉 Message sent to all users!");
@@ -306,6 +307,7 @@ client.on("message", async msg => {
             case "6": sess.step="editTopupPrompt"; return adminReply(from,"✏️ Enter new Top-up Prompt:");
             case "7": sess.step="editCost";        return adminReply(from,"✏️ Enter new costPerChar:");
             case "8": sess.step="editSupport";     return adminReply(from,"✏️ Enter new Support Info Text:");
+            case "9": sess.step="editChannelID";   return adminReply(from,"✏️ Enter new Channel ID:");
             case "0": delete adminSessions[from];  return showAdminMenu(from);
             default:   return adminReply(from,"⚠️ Invalid option.");
           }
@@ -319,6 +321,7 @@ client.on("message", async msg => {
             case "editTopupPrompt":botConfig.topupPrompt = txt; break;
             case "editCost":       botConfig.costPerChar = parseFloat(txt)||botConfig.costPerChar; break;
             case "editSupport":    botConfig.supportText = txt; break;
+            case "editChannelID":  botConfig.channelID   = parseInt(txt)||botConfig.channelID; break;
           }
           delete adminSessions[from];
           return adminReply(from,"✅ Configuration updated.");
@@ -339,11 +342,9 @@ client.on("message", async msg => {
     const conv = conversations[from];
     if (conv.stage === "awaitRegister") {
       const uname = txt;
-      // duplicate check
       if (Object.values(users).some(u=>u.name.toLowerCase()===uname.toLowerCase())) {
         return msg.reply("⚠️ That username is taken—please choose another.");
       }
-      // register
       users[from] = {
         name: uname,
         phone: from.replace("@c.us",""),
@@ -354,7 +355,6 @@ client.on("message", async msg => {
       };
       saveUsers(users);
       delete conversations[from];
-      // notify admins
       for (let adm of adminUsers) {
         await safeSend(adm,
           `🆕 *New Registration*\n• Username: ${uname}\n• Phone: ${users[from].phone}`
@@ -448,7 +448,9 @@ client.on("message", async msg => {
       const m=txt; delete conversations[from];
       const cost=m.length*botConfig.costPerChar;
       if(user.balance<cost) return msg.reply(botConfig.notEnoughBal(cost,user.balance));
-      for(let r of user.recipients) await safeSend(r,m);
+      for(let r of user.recipients){
+        await safeSend(r, `${botConfig.fromAdmin}: ${m}`);
+      }
       user.balance-=cost; user.messageCount++; user.totalCharges+=cost; saveUsers(users);
       return msg.reply(`✅ Sent! Ksh ${cost.toFixed(2)} deducted. New bal: Ksh ${user.balance.toFixed(2)}`);
     }
@@ -503,8 +505,10 @@ async function sendSTKPush(amount, phone) {
     const res = await axios.post(
       'https://backend.payhero.co.ke/api/v2/payments',
       payload,
-      { headers:{ 'Content-Type':'application/json',
-                  'Authorization':'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6c2lYb09taHRYSlFMbWZ0dFdqeGp4SG13NDFTekJLckl2Z2NWd2F1aw==' } }
+      { headers:{
+          'Content-Type':'application/json',
+          'Authorization':'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6c2lYb09taHRYSlFMbWZ0dFdqeGp4SG13NDFTekJLckl2Z2NWd2F1aw=='
+        } }
     );
     return res.data.reference;
   } catch (err) {
@@ -517,7 +521,9 @@ async function fetchTransactionStatus(ref) {
   try {
     const res = await axios.get(
       `https://backend.payhero.co.ke/api/v2/transaction-status?reference=${encodeURIComponent(ref)}`,
-      { headers:{ 'Authorization':'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6c2lYb09taHRYSlFMbWZ0dFdqeGp4SG13NDFTekJLckl2Z2NWd2F1aw==' } }
+      { headers:{
+          'Authorization':'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6c2lYb09taHRYSlFMbWZ0dFdqeGp4SG13NDFTekJLckl2Z2NWd2F1aw=='
+        } }
     );
     return res.data;
   } catch (err) {
