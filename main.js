@@ -1,12 +1,6 @@
 /*******************************************************************
  * main.js
  * FY'S PROPERTY WHATSAPP BOT
- * - Sensitive two-step top-up (amount → phone)
- * - Robust bulk send confirmation
- * - List/Remove Recipients features
- * - Detailed admin “View All Users”
- * - Super-admin can add/remove admins
- * - Glass-style QR dashboard
  *******************************************************************/
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const express        = require('express');
@@ -183,7 +177,7 @@ function showConfigMenu(jid) {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// 7) MESSAGE HANDLER
+// 7) MESSAGE HANDLER (USER + ADMIN + SUPPORT)
 // ────────────────────────────────────────────────────────────────────
 client.on('message', async msg => {
   const from = msg.from;
@@ -302,8 +296,7 @@ client.on('message', async msg => {
           }
         }
         if(sess.step==='getReason'){
-          users[sess.target].banned=true;
-          users[sess.target].banReason=txt;
+          users[sess.target].banned=true; users[sess.target].banReason=txt;
           saveUsers(users);
           delete adminSessions[from];
           return adminReply(from,`🚫 ${users[sess.target].name} banned: ${txt}`);
@@ -365,17 +358,17 @@ client.on('message', async msg => {
     return;
   }
 
-  // 7.3) USER REGISTRATION
-  if(!users[from]){
-    if(!conversations[from]){
-      conversations[from]={stage:'awaitPhone'};
+  // 7.3) USER REGISTRATION FLOW
+  if(!users[from]) {
+    if(!conversations[from]) {
+      conversations[from] = { stage:'awaitPhone' };
       return msg.reply(botConfig.welcomeText);
     }
-    const conv=conversations[from];
+    const conv = conversations[from];
     if(conv.stage==='awaitPhone'){
       const jid=formatPhone(txt);
       if(!jid){ delete conversations[from]; return msg.reply("⚠️ Invalid phone."); }
-      users[from]={
+      users[from] = {
         phone:jid.replace('@c.us',''), name:'', registeredAt:new Date().toISOString(),
         balance:0, banned:false, banReason:'', messageCount:0, totalCharges:0,
         recipients:[], support:{open:false,ticketId:null}
@@ -385,18 +378,24 @@ client.on('message', async msg => {
       return msg.reply(botConfig.askNameText);
     }
     if(conv.stage==='awaitName'){
-      users[from].name=txt; saveUsers(users); delete conversations[from];
+      users[from].name = txt;
+      saveUsers(users);
+      // **NEW: notify admin of new registration**
+      await safeSend(SUPER_ADMIN,
+        `🆕 *New Registration*\n• Name: ${users[from].name}\n• Phone: ${users[from].phone}`
+      );
+      delete conversations[from];
       return msg.reply(botConfig.regSuccess(users[from].name));
     }
     return;
   }
 
-  // 7.4) REGISTERED USER FLOW
+  // 7.4) REGISTERED USER MAIN FLOW
   const user = users[from];
   if(user.banned){
     return msg.reply(`🚫 You are banned.\nReason: ${user.banReason}`);
   }
-  // Pending conversation states
+  // Handle pending conversation states first
   if(conversations[from]?.stage){
     const conv = conversations[from];
 
@@ -409,7 +408,7 @@ client.on('message', async msg => {
       }
       conv.amount=amt;
       conv.stage='awaitPhone';
-      return msg.reply(`📱 Got it! Now send the M-PESA number to charge Ksh ${amt.toFixed(2)}:`);
+      return msg.reply(`📱 Now send the M-PESA number to charge *Ksh ${amt.toFixed(2)}*:`);  
     }
     if(conv.stage==='awaitPhone'){
       const mp=formatPhone(txt);
@@ -430,7 +429,7 @@ client.on('message', async msg => {
             `💰 *Deposit Success*\n• User: ${user.name}\n• Phone: ${mp}\n• Amount: Ksh ${amt}\n`+
             `• Code: ${st.provider_reference}\n• Time: ${now}`
           );
-          return client.sendMessage(from, `🎉 Top-up successful! New bal: Ksh ${user.balance.toFixed(2)}`);
+          return client.sendMessage(from, `🎉 Top-up successful! New bal: *Ksh ${user.balance.toFixed(2)}*`);
         } else {
           return client.sendMessage(from, "❌ Top-up failed or timed out.");
         }
@@ -447,7 +446,7 @@ client.on('message', async msg => {
       }
       conv.cost=cost;
       conv.stage='confirmBulk';
-      return msg.reply(`📝 "${conv.message}"\nCost: Ksh ${cost.toFixed(2)}\n1️⃣ Send   2️⃣ Cancel`);
+      return msg.reply(`📝 "${conv.message}"\nCost: *Ksh ${cost.toFixed(2)}*\n1️⃣ Send   2️⃣ Cancel`);
     }
     if(conv.stage==='confirmBulk'){
       if(txt==='1'){
@@ -492,11 +491,11 @@ client.on('message', async msg => {
     return; // block further
   }
 
-  // Main menu options
+  // Main menu
   if(lc==='menu') return msg.reply(botConfig.userMenu(user));
   if(lc==='1'){ conversations[from]={stage:'awaitBulk'}; return msg.reply("✏️ Type your broadcast message:"); }
-  if(lc==='2'){ conversations[from]={stage:'addRec'};  return msg.reply("📥 Enter phone to add:"); }
-  if(lc==='3'){ conversations[from]={stage:'delRec'};  return msg.reply("🗑️ Enter phone to remove:"); }
+  if(lc==='2'){ conversations[from]={stage:'addRec'}; return msg.reply("📥 Enter phone to add:"); }
+  if(lc==='3'){ conversations[from]={stage:'delRec'}; return msg.reply("🗑️ Enter phone to remove:"); }
   if(lc==='4'){ conversations[from]={stage:'awaitAmount'}; return msg.reply(botConfig.topupAmtPrompt); }
   if(lc==='5'){ return msg.reply(`💰 Bal: Ksh ${user.balance.toFixed(2)}\n✉️ Sent: ${user.messageCount}\n💸 Charges: Ksh ${user.totalCharges.toFixed(2)}`); }
   if(lc==='6'){
@@ -504,15 +503,14 @@ client.on('message', async msg => {
       user.support.open=true;
       user.support.ticketId=Date.now().toString().slice(-6);
       saveUsers(users);
-      return msg.reply(`🆘 Support #${user.support.ticketId} opened. Type your message:`);
-    }
+      return msg.reply(`🆘 Support #${user.support.ticketId} opened. Type your message:`); }
     return msg.reply("🆘 Send support message or 'close' to end.");
   }
   if(lc==='7'){
     return msg.reply(
       user.recipients.length
         ? `📋 Your Recipients:\n${user.recipients.join('\n')}`
-        : "⚠️ No recipients yet. Add with *2*."
+        : "⚠️ No recipients. Add with *2*."
     );
   }
 
