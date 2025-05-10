@@ -39,7 +39,7 @@ const adminUsers  = new Set([ SUPER_ADMIN ]);
 
 let botConfig = {
   fromAdmin:   "Admin GK-FY",
-  channelID:   529,
+  channelID:   724,
   costPerChar: 0.01,
   welcomeText:
     "👋 *Welcome to FY'S PROPERTY!* 🎉\n\n" +
