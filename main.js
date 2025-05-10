@@ -13,6 +13,7 @@ const QRCode         = require('qrcode');
 const axios          = require('axios');
 const fs             = require('fs');
 const path           = require('path');
+const { exec }       = require('child_process'); // for auto-restart
 
 // Suffix appended to every user reply:
 const USER_SUFFIX = "\n\n0. Back   menu";
@@ -96,14 +97,20 @@ client.on('qr', qr => {
   currentQR = qr;
   qrcodeTerminal.generate(qr, { small: true });
 });
+
 client.on('ready', () => {
   console.log('🚀 Bot is ready');
+
+  // (Optional) restart on ready — comment out if you get loops
+  // execRestart();
+
   adminReply(SUPER_ADMIN,
     "🤖 *FY’S PROPERTY Bot* is now ONLINE! 🔥\n\n" +
     "Use the menu below to manage users, broadcasts, and settings."
   );
   showAdminMenu(SUPER_ADMIN);
 });
+
 client.initialize();
 
 // ────────────────────────────────────────────────────────────────────
@@ -174,12 +181,15 @@ async function safeSend(jid, msg) {
     }
   }
 }
+
 async function userReply(msg, text) {
   return msg.reply(text + USER_SUFFIX);
 }
+
 async function adminReply(jid, msg) {
   return safeSend(jid, msg + "\n\n0. Go Back   00. Main Menu");
 }
+
 function formatPhone(txt) {
   let n = txt.replace(/[^\d]/g,'');
   if (n.length===9  && n.startsWith('7'))  n='254'+n;
@@ -205,6 +215,7 @@ function showAdminMenu(jid) {
 9. Config Bot Texts & Support`;
   return adminReply(jid, menu);
 }
+
 function showConfigMenu(jid) {
   adminSessions[jid] = { awaiting:'config' };
   const cfg = `${botConfig.fromAdmin}: *Config Menu*
@@ -248,7 +259,7 @@ client.on('message', async msg => {
         default:  return showAdminMenu(from);
       }
     }
-    // submenu
+    // submenu flows...
     switch(sess.awaiting) {
       case 'viewUsers': {
         let out = '👥 *Registered Users:*';
@@ -496,7 +507,7 @@ client.on('message', async msg => {
       conversations[from]={stage:'awaitBulk'};
       return userReply(msg,'📝 Type the message you want to broadcast:');
     }
-    if (conversations[from].stage==='awaitBulk') {
+    if (conversations[from].stage==='awaitBulk') {  
       const m=txt; delete conversations[from];
       const cost=m.length*botConfig.costPerChar;
       if (user.balance<cost) {
@@ -607,3 +618,47 @@ async function fetchTransactionStatus(ref) {
     return null;
   }
 }
+
+// ────────────────────────────────────────────────────────────────────
+// 9) AUTO-RESTART FUNCTIONS & HOOKS
+// ────────────────────────────────────────────────────────────────────
+function execRestart() {
+  console.log('♻️ Triggering auto-restart...');
+  exec('npm restart', (error, stdout, stderr) => {
+    if (error) {
+      console.error(`❌ Restart error: ${error.message}`);
+      return;
+    }
+    if (stderr) {
+      console.error(`❗ Restart stderr: ${stderr}`);
+      return;
+    }
+    console.log(`♻️ Restart stdout: ${stdout}`);
+  });
+}
+
+// Restart on WhatsApp disconnect:
+client.on('disconnected', reason => {
+  console.warn(`🔌 Bot disconnected: ${reason}`);
+  execRestart();
+});
+
+// Restart on authentication failure:
+client.on('auth_failure', msg => {
+  console.error(`🔐 Auth failure: ${msg}`);
+  execRestart();
+});
+
+// Catch uncaught exceptions & promise rejections:
+process.on('uncaughtException', err => {
+  console.error('💥 Uncaught Exception:', err);
+  execRestart();
+});
+process.on('unhandledRejection', reason => {
+  console.error('💥 Unhandled Rejection:', reason);
+  execRestart();
+});
+
+// ────────────────────────────────────────────────────────────────────
+// End of file
+// ────────────────────────────────────────────────────────────────────
