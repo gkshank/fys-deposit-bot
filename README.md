@@ -1,138 +1,313 @@
-Below is a **sample** `README.md` you can place in your GitHub repository. It highlights the bot’s features, installation steps, usage instructions, and admin commands, all in a **beautiful, user-friendly** format. You can customize or expand on it as you see fit.
+# FY’S PROPERTY WhatsApp Bot
+
+A fully featured WhatsApp automation bot built with [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js) for broadcasting, support tickets, balance management, and multi-admin control.
 
 ---
 
-```markdown
-# FY'S PROPERTY DEPOSIT BOT
+## 🚀 Key Features
 
-**Developer**: FY'S PROPERTY 🕊️
+### 1. Username-Only Registration
+- Users simply send a unique **username** to register.  
+- Duplicate-username checks: prompts to choose another if taken.
 
-A **WhatsApp Deposit Bot** that integrates with [Pay Hero](https://backend.payhero.co.ke/) for MPESA STK pushes.  
-It offers a **two-step countdown** to avoid spam, admin commands to edit bot messages & broadcast to multiple users,  
-and a convenient **Express server** to display the QR code for authentication.
+### 2. Numeric Menus & Easy Navigation
+- Every menu and prompt uses **numbers** (1, 2, 3, …).  
+- All user replies append:
+```
+
+0. Back   menu
+
+```
+so it’s easy to return to the previous screen or main menu at any time.
+
+### 3. Bulk Messaging
+- **Option 1**: Send a broadcast message instantly to **all** your added recipients.  
+- No extra confirmation step—just type your message, and it goes out prefixed with the admin label (e.g. “Admin GK-FY: Your message…”).  
+- Cost computed at **costPerChar** (configurable), deducted from balance automatically.
+
+### 4. Recipient Management
+- **Option 2**: **View Recipients**  
+Lists all phone numbers you’ve added.  
+- **Option 3**: **Add Recipient**  
+Enter a phone number in any common format; it’s normalized and stored.  
+- **Option 4**: **Remove Recipient**  
+Delete a number from your list.
+
+### 5. Balance Top-Up & Reporting
+- **Option 5**: Top-up via M-PESA STK push (minimum Ksh 11).  
+- Real-time “20s left” and “10s left” updates, plus final success/failure alert.  
+- Admin is notified on every successful deposit with user, amount, code, and timestamp.
+
+### 6. Check Balance & Usage
+- **Option 6**: View your current balance, messages sent, and total charges.
+
+### 7. Contact Support
+- **Option 7**: Sends a rich support message:
+```
+
+🆘 Need help? Contact us:
+• Email: [gk-y@iname.com](mailto:gk-y@iname.com)
+• WhatsApp: [https://wa.me/254701339573](https://wa.me/254701339573)
+
+```
+- Fully editable via the **Config Menu**.
+
+### 8. Delete Account
+- **Option 8**: Delete your account—clears your data so you can re-register if needed.
 
 ---
 
-## Key Features
+## 🛠️ Admin Panel
 
-1. **Private-Chat Only**  
-   - The bot **ignores** group chats (`@g.us`) and only works in **1-on-1** conversations.
+Only numbers in `adminUsers` can access:
 
-2. **Deposit Flow**  
-   - Asks for **deposit amount** and **deposit number**, then sends an **STK push** to Pay Hero.  
-   - Provides **two** minimal countdown updates at **10s** and **20s**, then fetches transaction status.  
-   - Sends **admin alerts** for deposit attempts and successes.
+```
 
-3. **Editable Messages & Channel ID**  
-   - The admin (phone number `254701339573`) can **edit** any of the bot’s text strings, including placeholders (`{amount}`, `{depositNumber}`, `{seconds}`, `{mpesaCode}`, `{date}`, `{footer}`) and the **channelID** used for STK push.  
-   - This allows for **dynamic** customization without modifying the source code.
+1. View All Users
+2. Change Cost/Char
+3. Top-up/Deduct User
+4. Ban/Unban User
+5. Bulk → All Registered
+6. Add Admin
+7. Remove Admin
+8. Show QR Dashboard
+9. Config Bot Texts & Support
 
-4. **Mass/Broadcast Messaging**  
-   - The admin can **send** a message to **multiple phone numbers** simultaneously with a single command.  
-   - The bot automatically **formats** phone numbers (e.g. `07...` → `2547...`) and **skips** invalid ones.
+````
 
-5. **QR Code Web Server**  
-   - Launches an **Express server** on `http://localhost:3000`, displaying the **WhatsApp QR code** for easy scanning.  
-   - Once scanned, your bot is authenticated and ready to receive messages.
-
-6. **No Spam**  
-   - The deposit flow only updates the user **twice** (at 10s and 20s), minimizing risk of spam or rate-limiting.
+- **Add/Remove Admin**: Manage admin rights on the fly.  
+- **Global Broadcast**: Send a message to every registered user.  
+- **Ban/Unban**: Block misbehaving users.
 
 ---
 
-## Installation & Setup
+## 🔧 Installation & Setup
 
-1. **Clone** or **Download** this repository.
-2. Make sure you have **Node.js (v14+)** installed.  
-   - Check with:  
-     ```bash
-     node -v
-     ```
-3. Navigate to the repository folder and install dependencies:
+1. **Clone** repository  
    ```bash
-   npm install
+   git clone https://github.com/your-repo/fys-property-bot.git
+   cd fys-property-bot
+````
+
+2. **Install** dependencies
+
+   ```bash
+   npm install whatsapp-web.js express qrcode-terminal qrcode axios
    ```
-4. Start the bot:
+
+3. **Configure** (in `main.js`)
+
+   * `SUPER_ADMIN` phone number
+   * Default `botConfig` texts
+   * M-PESA credentials
+
+4. **Run** the bot
+
    ```bash
    npm start
    ```
-5. Open your browser to [http://localhost:3000](http://localhost:3000) to see the **QR code**.  
-   - Scan this code with **WhatsApp** on your phone (under “Linked devices”).
 
-When you see “**WhatsApp client is *ready*!**” in your terminal, your bot is live and waiting for messages.
-
----
-
-## Usage
-
-### 1) Normal Users
-- Send **Start** to the bot in a **private chat** (not a group).  
-- The bot asks for a **deposit amount**, then a **deposit number**.  
-- It immediately sends an STK push to Pay Hero.  
-- After **10 seconds**, you get a small countdown update.  
-- After **20 seconds**, the bot fetches the transaction status and replies with **success**, **failure**, or **pending**.
-
-### 2) Admin User
-- The admin is **254701339573** by default.  
-- Type **admin** to see the list of admin commands:
-  ```
-  *ADMIN COMMANDS:*
-  1) admin - Show this help.
-  2) edit <key> <newText> - Edit a config value.
-  3) msg [numbers...] message - Broadcast to multiple users.
-  ```
-  
-#### Admin Examples
-
-1. **Edit Bot Strings**  
-   - `edit welcomeMessage Hello from GK-FY!\nHow much would you like to deposit?`  
-   - `edit depositChosen Great, you decided to deposit {amount} Ksh!\nPlease share your deposit number.`  
-   - `edit paymentInitiated Payment initiated!\nWe'll check status in {seconds} seconds...`  
-   - `edit countdownUpdate {seconds} seconds left...\nWe will fetch the status soon!`  
-   - `edit paymentSuccess Payment Successful!\nAmount: {amount}\nDeposit Number: {depositNumber}\nM-PESA Code: {mpesaCode}\nDate: {date}\n{footer}`  
-   - `edit paymentFooter Thank you for choosing FY'S PROPERTY!\nType Start to deposit again.`  
-   - `edit fromAdmin From Admin GK-FY`  
-   - `edit channelID 911`
-
-2. **Broadcast Messages**  
-   - `msg [254712345678,254701234567] Hello from GK-FY!`
-   - The bot attempts to format phone numbers (07... → 2547...) and sends the message.  
-   - Invalid numbers are skipped with a warning.  
-   - The broadcast includes the custom label `fromAdmin` at the top.
-
-### 3) Placeholders
-You can use the following placeholders in your edited messages:
-- `{amount}` → deposit amount  
-- `{depositNumber}` → deposit number  
-- `{seconds}` → countdown seconds (10 or 20)  
-- `{mpesaCode}` → M-PESA transaction code  
-- `{date}` → date/time in Kenyan time  
-- `{footer}` → the text in `paymentFooter`
+5. **Access** QR dashboard
+   Open [http://localhost:3000](http://localhost:3000) for the glass-style QR scanner.
 
 ---
 
-## Bot Flow Diagram
+## 📋 Example: Using the **Config Menu**
+
+Below is a walkthrough showing how you—as an admin—can tweak every bit of bot text on the fly:
+
+1. **Type** `9` at the **Admin Main Menu** to open **Config Menu**.
+2. **Enter** the number (1–9) of the item you want to change.
+3. **Send** the new text or value.
+4. **Receive** a “✅ Configuration updated!” confirmation.
+
+---
+
+### 1. Edit Admin Label
+
+> **Admin Main Menu →** `9`
+> **Config Menu →** `1`
+> **Bot asks:**
+> `✏️ Enter new Admin Label:`
+>
+> **You reply:**
+> `📣 Team FY-Property`
+>
+> **Bot confirms:**
+> `✅ Configuration updated!`
+
+All admin-originated messages now start with **“Team FY-Property”**.
+
+---
+
+### 2. Edit Welcome Text
+
+> **Config Menu →** `2`
+> **Bot asks:**
+> `✏️ Enter new Welcome Text:`
+>
+> **You reply:**
+>
+> ```
+> 👋 Hey there! Welcome to FY’s Property Bot!  
+> Please send me your *username* to get started—and enjoy exclusive offers! 🎉
+> ```
+>
+> **Bot confirms:**
+> `✅ Configuration updated!`
+
+New users will see this fresh, emoji-rich welcome.
+
+---
+
+### 3. Edit Registration Success Text
+
+> **Config Menu →** `3`
+> **Bot asks:**
+> `✏️ Enter new Registration Success Text:`
+>
+> **You reply** (use `{name}` placeholder):
+>
+> ```
+> 🎉 Woohoo, {name}! Your account is live.  
+> Your starting balance is *Ksh 0.00*.  
+> Ready to broadcast? 🚀
+> ```
+>
+> **Bot confirms:**
+> `✅ Configuration updated!`
+
+When a user completes registration, `{name}` is replaced with their username.
+
+---
+
+### 4. Edit User Menu Text
+
+> **Config Menu →** `4`
+> **Bot asks:**
+> `✏️ Enter new User Menu Text (use {name}):`
+>
+> **You reply:**
+>
+> ```
+> ✨ Greetings, {name}! What can I do for you today?  
+> 1. Send Broadcast  
+> 2. View Your Contacts  
+> 3. Add a Contact  
+> 4. Remove a Contact  
+> 5. Top-up  
+> 6. Check Account  
+> 7. Help & Support  
+> 8. Delete My Account
+> ```
+>
+> **Bot confirms:**
+> `✅ Configuration updated!`
+
+Your users now see this revamped menu.
+
+---
+
+### 5. Edit “Not Enough Balance” Text
+
+> **Config Menu →** `5`
+> **Bot asks:**
+> `✏️ Enter new Not-Enough-Balance Text:`
+>
+> **You reply:**
+>
+> ```
+> 😢 Oh no—you need Ksh {cost} but have only Ksh {bal}.  
+> Please top-up before sending. 💳
+> ```
+>
+> **Bot confirms:**
+> `✅ Configuration updated!`
+
+At send-time, `{cost}` and `{bal}` auto-replace.
+
+---
+
+### 6. Edit Top-up Prompt
+
+> **Config Menu →** `6`
+> **Bot asks:**
+> `✏️ Enter new Top-up Prompt:`
+>
+> **You reply:**
+> `💳 How much would you like to add to your wallet? (Min Ksh 11)`
+>
+> **Bot confirms:**
+> `✅ Configuration updated!`
+
+---
+
+### 7. Edit costPerChar
+
+> **Config Menu →** `7`
+> **Bot asks:**
+> `✏️ Enter new costPerChar:`
+>
+> **You reply:**
+> `0.02`
+>
+> **Bot confirms:**
+> `✅ costPerChar set to Ksh 0.02`
+
+Now every character costs Ksh 0.02.
+
+---
+
+### 8. Edit Support Text
+
+> **Config Menu →** `8`
+> **Bot asks:**
+> `✏️ Enter new Support Info Text:`
+>
+> **You reply:**
+>
+> ```
+> 🆘 Stuck or need assistance?  
+> • Email: support@fyproperty.com  
+> • WhatsApp: https://wa.me/254701339573  
+> We’re here 24/7! 😊
+> ```
+>
+> **Bot confirms:**
+> `✅ Configuration updated!`
+
+---
+
+### 9. Edit Channel ID
+
+> **Config Menu →** `9`
+> **Bot asks:**
+> `✏️ Enter new Channel ID:`
+>
+> **You reply:**
+> `750`
+>
+> **Bot confirms:**
+> `✅ Configuration updated!`
+
+This updates the M-PESA channel ID instantly.
+
+---
+
+All changes take effect **immediately**—no bot restart required.
+Type `0` at any time to return to the **Admin Main Menu**. Happy customizing! 🎨✨
+
+---
+
+## ❤️ Contributing
+
+Pull requests, issues, and suggestions are very welcome! Let’s make this bot even better.
+
+---
+
+## 📄 License
+
+MIT © FY’S PROPERTY
 
 ```
-User: "start"
-Bot: [welcomeMessage]
-User: "1000" (deposit amount)
-Bot: [depositChosen w/ {amount}]
-User: "0712345678" (deposit number)
-Bot: [paymentInitiated w/ {seconds}=20]
-...10 seconds pass...
-Bot: [countdownUpdate w/ {seconds}=10]
-...10 more seconds pass...
-Bot fetches status => success/failure/pending
-Bot: [paymentSuccess or failure message]
 ```
-
----
-
-## License & Developer
-
-This project is open source under the **ISC License**.  
-**Developer**: FY'S PROPERTY 🕊️
-
-Feel free to modify or extend this code to suit your specific needs.  
-Enjoy your fully customizable **WhatsApp Deposit Bot**!  
