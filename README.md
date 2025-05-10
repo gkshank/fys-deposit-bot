@@ -187,15 +187,19 @@ All admin-originated messages now start with **“Team FY-Property”**.
 > **You reply:**
 >
 > ```
-> ✨ Greetings, {name}! What can I do for you today?  
-> 1. Send Broadcast  
-> 2. View Your Contacts  
-> 3. Add a Contact  
-> 4. Remove a Contact  
-> 5. Top-up  
-> 6. Check Account  
-> 7. Help & Support  
-> 8. Delete My Account
+💫 Greetings, *{name}!*
+Welcome to your FY’S PROPERTY control panel — sleek, smart, and always ready. What would you like to do today?
+
+🔹 *1.* 📢 Send a Broadcast
+🔹 *2.* 📇 View Your Contacts
+🔹 *3.* ➕ Add a New Contact
+🔹 *4.* ❌ Remove added Contact
+🔹 *5.* 💰 Top-up Your Balance
+🔹 *6.* 📊 Check Your Account
+🔹 *7.* 🆘 Help & Support
+🔹 *8.* 🗑️ Delete My Account
+
+🌟 *_Thanks for riding with FY’S PROPERTY — where vision meets value. 🌹_*
 > ```
 >
 > **Bot confirms:**
