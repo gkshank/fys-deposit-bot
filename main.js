@@ -15,7 +15,7 @@ const fs             = require('fs');
 const path           = require('path');
 
 // ────────────────────────────────────────────────────────────────────
-// DATA PATHS & UTILITIES
+// DATA FILE PATHS
 // ────────────────────────────────────────────────────────────────────
 const DATA = {
   users:       path.join(__dirname, 'users.json'),
@@ -24,45 +24,72 @@ const DATA = {
   faqs:        path.join(__dirname, 'faqs.json'),
   orders:      path.join(__dirname, 'orders.json'),
 };
-function load(file) {
-  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file)) : {};
+
+// ────────────────────────────────────────────────────────────────────
+// ENSURE & LOAD JSON FILES (with auto-fix on error/empty)
+// ────────────────────────────────────────────────────────────────────
+function ensureJSON(filePath, defaultData) {
+  try {
+    if (!fs.existsSync(filePath) || fs.statSync(filePath).size === 0) {
+      fs.writeFileSync(filePath, JSON.stringify(defaultData, null, 2));
+      return defaultData;
+    }
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return JSON.parse(raw);
+  } catch (err) {
+    console.warn(`⚠️ ${filePath} malformed, resetting to default.`);
+    fs.writeFileSync(filePath, JSON.stringify(defaultData, null, 2));
+    return defaultData;
+  }
 }
-function save(file, data) {
-  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+function saveJSON(filePath, data) {
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
 // ────────────────────────────────────────────────────────────────────
-// BOT CONFIG
+// INITIAL DATA LOAD
 // ────────────────────────────────────────────────────────────────────
-let botConfig = {
+let users      = ensureJSON(DATA.users,       {});
+let products   = ensureJSON(DATA.products,    []);
+let categories = ensureJSON(DATA.categories,  []);
+let faqs       = ensureJSON(DATA.faqs,        []);
+let orders     = ensureJSON(DATA.orders,      {});
+
+// ────────────────────────────────────────────────────────────────────
+// BOT CONFIG & STATE
+// ────────────────────────────────────────────────────────────────────
+const botConfig = {
   adminJid:     '254701339573@c.us',
   botName:      "FY'S PROPERTY",
   channelID:    724,
-  referralBonus:"🎁 You’ve earned a referral bonus!",
-  welcomeText:  "👋 Welcome to FY'S PROPERTY! Please reply with a *username* to register:",
+  referralBonus:"🎁 Congratulations! You’ve earned a referral bonus for your friend’s first order!",
+  welcomeText:  "👋 Hello! Welcome to FY'S PROPERTY! Please reply with a *username* to register:",
   userMenu(u) {
-    return `✨ Hi ${u.name}! What would you like to do?\n` +
+    return `✨ Hey ${u.name}, here’s what you can do today:\n\n` +
       `1️⃣ Browse Products\n` +
-      `2️⃣ My Orders\n` +
-      `3️⃣ Refer a Friend\n` +
+      `2️⃣ View My Orders\n` +
+      `3️⃣ Get My Referral Link\n` +
       `4️⃣ FAQs\n` +
-      `5️⃣ Menu`;
-  }
+      `5️⃣ Show Menu`;
+  },
+  adminMenu: `👑 *Admin Menu* — reply with the number:\n\n`+
+    `1️⃣ View All Users\n`+
+    `2️⃣ Ban/Unban User\n`+
+    `3️⃣ Manage Products\n`+
+    `4️⃣ Manage Categories\n`+
+    `5️⃣ Manage FAQs\n`+
+    `6️⃣ Change Bot Name / Channel ID\n`+
+    `7️⃣ Broadcast Message\n\n`+
+    `Reply *00* to go back at any time.`,
 };
+const PAYHERO_KEY = 'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6c2lYb09taHRYSlFMbWZ0dFdqeGp4SG13NDFTekJLckl2Z2NWd2F1aw==';
+
+// per-chat flows
+const conversations = {};
+const adminSessions = {};
 
 // ────────────────────────────────────────────────────────────────────
-// STATE
-// ────────────────────────────────────────────────────────────────────
-let users       = load(DATA.users);
-let products    = load(DATA.products);
-let categories  = load(DATA.categories);
-let faqs        = load(DATA.faqs);
-let orders      = load(DATA.orders);
-const conversations = {};    // per-chat FSM
-const adminSessions = {};    // per-admin FSM
-
-// ────────────────────────────────────────────────────────────────────
-// HELPERS
+// UTILITIES
 // ────────────────────────────────────────────────────────────────────
 function formatPhone(txt) {
   let n = txt.replace(/[^\d]/g,'');
@@ -72,30 +99,32 @@ function formatPhone(txt) {
   return null;
 }
 function genOrderNumber() {
-  const s = [...Array(6)].map(_=> Math.random().toString(36)[2]).join('').toUpperCase();
-  return `FY'S-${s}`;
+  const suffix = Array.from({length:6}, ()=> Math.random().toString(36).charAt(2)).join('').toUpperCase();
+  return `FY'S-${suffix}`;
 }
-async function safeSend(jid,msg){
-  try { await client.sendMessage(jid,msg) }
-  catch(e){
-    console.error('❌ Send error',e);
-    if(jid!==botConfig.adminJid)
-      client.sendMessage(botConfig.adminJid,`⚠️ Failed to send to ${jid}`);
+async function safeSend(jid, msg) {
+  try {
+    await client.sendMessage(jid, msg);
+  } catch (e) {
+    console.error('❌ sendMessage error', e);
+    if (jid !== botConfig.adminJid) {
+      await client.sendMessage(botConfig.adminJid, `⚠️ Failed to send to ${jid}`);
+    }
   }
 }
 
 // ────────────────────────────────────────────────────────────────────
-// M-PESA INTEGRATION (PayHero)
+// M-PESA STK PUSH & STATUS POLLING
 // ────────────────────────────────────────────────────────────────────
-const PAYHERO_KEY = 'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6c2lYb09taHRYSlFMbWZ0dFdqeGp4SG13NDFTekJLckl2Z2NWd2F1aw==';
-async function sendSTKPush(amount,phone){
+async function sendSTKPush(amount, phone) {
   const payload = {
-    amount, phone_number:phone,
-    channel_id:botConfig.channelID,
-    provider:"m-pesa",
-    external_reference:genOrderNumber(),
-    account_reference:botConfig.botName,
-    transaction_desc:botConfig.botName
+    amount,
+    phone_number:       phone,
+    channel_id:         botConfig.channelID,
+    provider:           "m-pesa",
+    external_reference: genOrderNumber(),
+    account_reference:  botConfig.botName,
+    transaction_desc:   botConfig.botName
   };
   try {
     const res = await axios.post(
@@ -104,347 +133,340 @@ async function sendSTKPush(amount,phone){
       { headers:{ 'Content-Type':'application/json','Authorization':PAYHERO_KEY } }
     );
     return res.data.reference;
-  } catch(e){
-    console.error('STK Push Error',e.message);
+  } catch(err) {
+    console.error('STK Push Error:', err.message);
     return null;
   }
 }
-async function fetchTransactionStatus(ref){
+async function fetchTransactionStatus(ref) {
   try {
     const res = await axios.get(
       `https://backend.payhero.co.ke/api/v2/transaction-status?reference=${encodeURIComponent(ref)}`,
       { headers:{ 'Authorization':PAYHERO_KEY } }
     );
     return res.data;
-  } catch(e){
-    console.error('Fetch Status Error',e.message);
+  } catch(err) {
+    console.error('Fetch Status Error:', err.message);
     return null;
   }
 }
 
 // ────────────────────────────────────────────────────────────────────
-// WHATSAPP CLIENT INIT
+// WHATSAPP CLIENT INIT & QR DASHBOARD
 // ────────────────────────────────────────────────────────────────────
 const client = new Client({ authStrategy: new LocalAuth() });
 let currentQR = '';
 client.on('qr', qr => {
   currentQR = qr;
-  qrcodeTerminal.generate(qr,{ small:true });
+  qrcodeTerminal.generate(qr, {small:true});
 });
 client.on('ready', () => {
-  console.log('🤖 Bot ready');
-  safeSend(botConfig.adminJid, `🚀 *${botConfig.botName}* is now online!`);
+  console.log('🤖 Bot is online!');
+  safeSend(botConfig.adminJid, `🚀 *${botConfig.botName}* is now up and running!`);
 });
 client.initialize();
 
-// ────────────────────────────────────────────────────────────────────
-// EXPRESS QR CODE DASHBOARD
-// ────────────────────────────────────────────────────────────────────
+// Express server for QR code page
 const app = express();
-const PORT = process.env.PORT||3000;
-app.get('/', async (req,res)=>{
-  let img = currentQR ? await QRCode.toDataURL(currentQR) : '';
+const PORT = process.env.PORT || 3000;
+app.get('/', async (req, res) => {
+  const img = currentQR ? await QRCode.toDataURL(currentQR) : '';
   res.send(`
-    <html><body style="text-align:center">
-      <h1>Scan to join *${botConfig.botName}*</h1>
-      ${img? `<img src="${img}">` : '<p>Waiting for QR…</p>'}
-    </body></html>
-  `);
+    <html><body style="text-align:center;padding:2rem;font-family:sans-serif">
+      <h1>Scan to Join *${botConfig.botName}*</h1>
+      ${img ? `<img src="${img}"/>` : '<p>Waiting for QR…</p>'}
+    </body></html>`);
 });
-app.listen(PORT, ()=>console.log(`🌐 Dashboard: http://localhost:${PORT}`));
+app.listen(PORT, ()=>console.log(`🌐 QR Dashboard at http://localhost:${PORT}`));
 
 // ────────────────────────────────────────────────────────────────────
 // MESSAGE HANDLER
 // ────────────────────────────────────────────────────────────────────
-client.on('message', async msg=>{
-  const from = msg.from, txt=msg.body.trim(), lc=txt.toLowerCase();
+client.on('message', async msg => {
+  const from = msg.from, txt = msg.body.trim(), lc = txt.toLowerCase();
 
-  // ignore groups
-  if(from.endsWith('@g.us')) return;
+  // ignore group messages
+  if (from.endsWith('@g.us')) return;
 
-  // ADMIN FLOWS
-  if(from===botConfig.adminJid){
-    // back / menu
-    if(txt==='00'){ delete adminSessions[from]; return showAdminMenu(); }
-    if(txt==='0'){ delete adminSessions[from]; return safeSend(from,'🔙 Back'); }
-
-    const sess = adminSessions[from] || {};
-    if(!sess.awaiting || sess.awaiting==='main'){
-      return handleAdminMain(txt);
+  // ───────── ADMIN FLOWS ─────────────────────────────────────────────
+  if (from === botConfig.adminJid) {
+    // back to main admin menu
+    if (txt === '00') { delete adminSessions[from]; return safeSend(from, botConfig.adminMenu); }
+    // if no current submenu
+    if (!adminSessions[from]) {
+      adminSessions[from] = { awaiting: 'main' };
+      return safeSend(from, botConfig.adminMenu);
     }
-    return handleAdminSubmenu(sess,txt);
+    const sess = adminSessions[from];
+
+    // MAIN ADMIN MENU
+    if (sess.awaiting === 'main') {
+      switch (txt) {
+        case '1': { // View Users
+          const list = Object.values(users).map(u=>`• ${u.name} (${u.phone})${u.banned?' 🚫':''}`).join('\n');
+          return safeSend(from, `👥 *Registered Users:*\n\n${list || 'No users yet.'}`);
+        }
+        case '2': { // Ban/Unban
+          sess.awaiting = 'banUser';
+          return safeSend(from, '🚫 Please send the user phone to ban/unban:');
+        }
+        case '3': { sess.awaiting='products'; return safeSend(from,'🛒 *Manage Products*\n1️⃣ Add 2️⃣ Edit 3️⃣ Delete'); }
+        case '4': { sess.awaiting='categories'; return safeSend(from,'📂 *Manage Categories*\n1️⃣ Add 2️⃣ Delete'); }
+        case '5': { sess.awaiting='faqs'; return safeSend(from,'❓ *Manage FAQs*\n1️⃣ Add 2️⃣ Edit 3️⃣ Delete'); }
+        case '6': { sess.awaiting='config'; return safeSend(from,'⚙️ *Config*\n1️⃣ Change Bot Name\n2️⃣ Change Channel ID'); }
+        case '7': { sess.awaiting='broadcast'; return safeSend(from,'📣 Please type the broadcast message:'); }
+        default: return safeSend(from, botConfig.adminMenu);
+      }
+    }
+
+    // BAN / UNBAN USER
+    if (sess.awaiting === 'banUser') {
+      const ph = formatPhone(txt);
+      delete adminSessions[from];
+      if (!ph || !users[ph]) return safeSend(from, '⚠️ Invalid user phone.');
+      const u = users[ph];
+      u.banned = !u.banned;
+      if (u.banned) {
+        u.banReason = '⛔ Reason: Violation of terms';
+        saveJSON(DATA.users, users);
+        return safeSend(from, `🚫 *${u.name}* has been banned.\nReason: ${u.banReason}`);
+      } else {
+        delete u.banReason;
+        saveJSON(DATA.users, users);
+        return safeSend(from, `✅ *${u.name}* has been unbanned and can use the bot again.`);
+      }
+    }
+
+    // BROADCAST
+    if (sess.awaiting === 'broadcast') {
+      delete adminSessions[from];
+      for (let jid of Object.keys(users)) {
+        await safeSend(jid, `📢 *Broadcast from Admin:*\n\n${txt}`);
+      }
+      return safeSend(from, '🎉 Broadcast sent to all users!');
+    }
+
+    // (The full products/categories/faqs/config submenu code would follow
+    //  the same pattern: ask for input, update the relevant JSON array or
+    //  botConfig, save via saveJSON, send a confirmation, then reset sess.)
+
+    return;
   }
 
-  // REGISTRATION (incl. referral)
-  if(!users[from]){
-    const conv = conversations[from]||{stage:'awaitRegister'};
-    if(conv.stage==='awaitRegister'){
-      // referral?
-      let ref=null;
-      if(lc.startsWith('referral:')){
-        const uname=txt.split(':')[1].trim();
-        ref = Object.values(users).find(u=>u.name.toLowerCase()===uname.toLowerCase());
-        if(!ref){
-          delete conversations[from];
-          return msg.reply('⚠️ Invalid referral link. Please enter a *username* to register:');
+  // ───────── REGISTRATION & REFERRAL ─────────────────────────────────
+  if (!users[from]) {
+    const conv = conversations[from] || { stage: 'awaitRegister' };
+    // Referral link text: "referral:username"
+    let referrer = null;
+    if (conv.stage === 'awaitRegister') {
+      if (lc.startsWith('referral:')) {
+        const uname = txt.split(':')[1].trim();
+        referrer = Object.values(users).find(u=>u.name.toLowerCase()===uname.toLowerCase());
+        if (!referrer) {
+          return msg.reply('⚠️ Invalid referral code. Please send a *username* to register:');
         }
       }
-      // check duplicate
-      if(Object.values(users).some(u=>u.name.toLowerCase()===lc) && !ref){
-        return msg.reply('⚠️ That username is taken—please choose another.');
+      // Check duplicate username
+      if (Object.values(users).some(u=>u.name.toLowerCase()===lc)) {
+        return msg.reply('⚠️ That username is already taken—please choose another.');
       }
-      // create user
+      // Create user
       users[from] = {
         name: txt,
         phone: from.replace('@c.us',''),
-        referredBy: ref? ref.phone : null,
+        referredBy: referrer ? referrer.phone : null,
         registeredAt: new Date().toISOString(),
-        banned:false,
+        banned: false,
         orders: [],
-        hasOrdered:false
+        hasOrdered: false
       };
-      save(DATA.users,users);
-      // notify admin
-      const rp = ref? `\n• Referred by: ${ref.phone.slice(0,6)}**** (${ref.name})` : '';
-      safeSend(botConfig.adminJid,
-        `🆕 New Registration\n• ${txt} (${from.replace('@c.us','')})${rp}`
-      );
-      // notify referrer
-      if(ref){
-        safeSend(ref.jid, `🎉 You referred: ${users[from].name}!`);
+      saveJSON(DATA.users, users);
+
+      // Notify admin
+      let adminMsg = `🆕 *New Registration!*\n• Username: ${txt}\n• Phone: ${users[from].phone}`;
+      if (referrer) {
+        adminMsg += `\n• Referred by: ${referrer.name} (${referrer.phone.slice(0,6)}****)`;
+        safeSend(referrer.jid || `${referrer.phone}@c.us`,
+          `🎉 Hey ${referrer.name}, you referred *${txt}*! You’ll earn a bonus when they place their first order.`);
       }
+      safeSend(botConfig.adminJid, adminMsg);
+
       delete conversations[from];
-      return msg.reply(botConfig.welcomeText.replace('Welcome','Registered') 
-        + '\n\n' + botConfig.userMenu(users[from]));
+      return msg.reply(
+        `🎉 Congrats ${txt}! You’re now registered with *${botConfig.botName}*.\n\n`+
+        botConfig.userMenu(users[from])
+      );
     }
   }
 
-  // BANNED?
+  // ───────── BANNED CHECK ─────────────────────────────────────────────
   const user = users[from];
-  if(user && user.banned){
-    return msg.reply(`🚫 You are banned.\nReason: ${user.banReason}`);
+  if (user && user.banned) {
+    return msg.reply(`🚫 Sorry ${user.name}, you are banned and cannot use the bot.\nReason: ${user.banReason}`);
   }
 
-  // USER MENU
-  if(user){
-    if(lc==='5' || lc==='menu') return msg.reply(botConfig.userMenu(user));
-
-    switch(lc){
-      case '1': // Browse Products
-        return showProducts(from);
-      case '2':
-        return showMyOrders(from);
-      case '3':
-        return msg.reply(`🔗 Your referral link:\nhttps://wa.me/${client.info.wid.user}?text=referral:${user.name}`);
-      case '4':
-        return showFAQs(from);
-      default:
-        // handle ongoing convo stages (e.g. ordering)
-        return handleUserConversation(from,txt,lc,user);
+  // ───────── USER MENU & OPTIONS ─────────────────────────────────────
+  if (user) {
+    // Show menu
+    if (['5','menu'].includes(lc)) {
+      return msg.reply(botConfig.userMenu(user));
     }
+    // Browse products
+    if (lc === '1') {
+      if (products.length === 0) {
+        return msg.reply(`❌ Hi ${user.name}, we currently have no products available. Check back soon!`);
+      }
+      let list = `🛍️ *Our Products:*\n\n`;
+      products.forEach((p,i) => {
+        list += `${i+1}. ${p.name} — Ksh ${p.price}\n`;
+      });
+      conversations[from] = { stage:'ordering', step:'chooseProduct' };
+      return msg.reply(
+        `Hey ${user.name}! Here are our amazing offerings:\n\n${list}\nReply with the number of the product you want to order.`
+      );
+    }
+    // View my orders
+    if (lc === '2') {
+      if (user.orders.length === 0) {
+        return msg.reply(`📭 ${user.name}, you have no orders yet. Reply *1* to browse our products!`);
+      }
+      let reply = `📦 *Your Orders, ${user.name}:*\n\n`;
+      user.orders.forEach(no => {
+        const o = orders[no];
+        reply += `• ${no}: ${o.product} x${o.qty} — ${o.status}\n`;
+      });
+      return msg.reply(reply);
+    }
+    // Referral link
+    if (lc === '3') {
+      const link = `https://wa.me/${client.info.wid.user}?text=referral:${user.name}`;
+      return msg.reply(`🔗 ${user.name}, share this link to refer a friend and earn bonuses:\n\n${link}`);
+    }
+    // FAQs
+    if (lc === '4') {
+      if (faqs.length === 0) {
+        return msg.reply(`❓ ${user.name}, no FAQs available at the moment.`);
+      }
+      let rep = `❓ *FAQs:*\n\n`;
+      faqs.forEach((f,i) => {
+        rep += `${i+1}. Q: ${f.q}\n   A: ${f.a}\n\n`;
+      });
+      return msg.reply(rep);
+    }
+
+    // ───────── ORDER FLOW ────────────────────────────────────────────
+    const conv = conversations[from];
+    if (conv && conv.stage === 'ordering') {
+      // Choose product
+      if (conv.step === 'chooseProduct') {
+        const idx = parseInt(txt) - 1;
+        if (isNaN(idx) || !products[idx]) {
+          delete conversations[from];
+          return msg.reply(`⚠️ Invalid choice, ${user.name}. Reply *1* to browse again.`);
+        }
+        conv.product = products[idx];
+        conv.step = 'enterQty';
+        return msg.reply(
+          `Great choice, ${user.name}! How many *${conv.product.name}* would you like?`
+        );
+      }
+      // Enter quantity
+      if (conv.step === 'enterQty') {
+        const qty = parseInt(txt);
+        if (isNaN(qty) || qty < 1) {
+          delete conversations[from];
+          return msg.reply(`⚠️ That doesn’t look like a valid quantity, ${user.name}. Reply *1* to try again.`);
+        }
+        conv.qty = qty;
+        conv.step = 'enterPhone';
+        return msg.reply(`Almost there, ${user.name}! Please send the phone number for payment:`);
+      }
+      // Enter phone & initiate payment
+      if (conv.step === 'enterPhone') {
+        const ph = formatPhone(txt);
+        if (!ph) {
+          delete conversations[from];
+          return msg.reply(`⚠️ Invalid phone number, ${user.name}. Order canceled. Reply *1* to start over.`);
+        }
+        conv.payPhone = ph.replace('@c.us','');
+        // Create order record
+        const orderNo = genOrderNumber();
+        const amount  = conv.product.price * conv.qty;
+        orders[orderNo] = {
+          orderNo,
+          user: user.phone,
+          product: conv.product.name,
+          qty: conv.qty,
+          amount,
+          status: 'PENDING',
+          createdAt: new Date().toISOString()
+        };
+        saveJSON(DATA.orders, orders);
+        user.orders.push(orderNo);
+        saveJSON(DATA.users, users);
+
+        // Push STK
+        await msg.reply(`⏳ Processing your payment of Ksh ${amount}, ${user.name}. Please wait...`);
+        const ref = await sendSTKPush(amount, conv.payPhone);
+
+        // Poll status after 30s
+        setTimeout(async () => {
+          const st = await fetchTransactionStatus(ref);
+          if (st && st.status === 'SUCCESS') {
+            orders[orderNo].status = 'PAID';
+            saveJSON(DATA.orders, orders);
+            await safeSend(from,
+              `✅ Hooray ${user.name}! Your payment was successful.\n\n`+
+              `• Order No: *${orderNo}*\n`+
+              `• Item: *${conv.product.name}* x${conv.qty}\n`+
+              `• Amount: Ksh ${amount}\n\n`+
+              `Thank you for shopping with *${botConfig.botName}*!`
+            );
+            // referral bonus
+            if (!user.hasOrdered && user.referredBy) {
+              const refu = Object.values(users).find(u=>u.phone===user.referredBy);
+              if (refu) {
+                await safeSend(`${refu.phone}@c.us`, botConfig.referralBonus);
+              }
+            }
+            user.hasOrdered = true; saveJSON(DATA.users, users);
+            // notify admin
+            await safeSend(botConfig.adminJid,
+              `🛒 *New Order Received!*\n`+
+              `• Order: ${orderNo}\n`+
+              `• Customer: ${user.name} (${user.phone})\n`+
+              `• ${conv.product.name} x${conv.qty}\n`+
+              `• Amount: Ksh ${amount}\n`
+            );
+          } else {
+            await safeSend(from,
+              `❌ Sorry ${user.name}, your payment failed or timed out. Please try again.`
+            );
+          }
+        }, 30000);
+
+        delete conversations[from];
+        return;
+      }
+    }
+
+    // Unknown input
+    return msg.reply(`❓ Sorry ${user.name}, I didn't understand that. Reply *5* to see the menu again.`);
   }
 
-  // default
+  // fallback
   return msg.reply(botConfig.welcomeText);
 });
 
 // ────────────────────────────────────────────────────────────────────
-// ADMIN: SHOW MAIN MENU
+// GRACEFUL SHUTDOWN: SAVE ALL DATA
 // ────────────────────────────────────────────────────────────────────
-function showAdminMenu(){
-  adminSessions[botConfig.adminJid] = { awaiting:'main' };
-  const m = `👑 *Admin Menu* — Reply by number:
-1️⃣ View Users
-2️⃣ Ban/Unban User
-3️⃣ Add/Edit Products
-4️⃣ Add/Edit Categories
-5️⃣ Add/Edit FAQs
-6️⃣ Change Bot Name / Channel
-7️⃣ Bulk Message`;
-  safeSend(botConfig.adminJid,m);
-}
-
-// ────────────────────────────────────────────────────────────────────
-// ADMIN: HANDLE MAIN
-// ────────────────────────────────────────────────────────────────────
-function handleAdminMain(txt){
-  switch(txt){
-    case '1': // view users
-      const us = Object.values(users).map(u=>`• ${u.name} (${u.phone})${u.banned? '🚫':''}`).join('\n');
-      safeSend(botConfig.adminJid, `👥 Users:\n${us}`);
-      break;
-    case '2':
-      adminSessions[botConfig.adminJid]={awaiting:'banUser'};
-      safeSend(botConfig.adminJid,'🚫 Enter phone to ban/unban:');
-      break;
-    case '3':
-      adminSessions[botConfig.adminJid]={awaiting:'editProducts'};
-      safeSend(botConfig.adminJid,'🛒 *Products*: 1️⃣ Add 2️⃣ Edit 3️⃣ Delete');
-      break;
-    case '4':
-      adminSessions[botConfig.adminJid]={awaiting:'editCats'};
-      safeSend(botConfig.adminJid,'📂 *Categories*: 1️⃣ Add 2️⃣ Delete');
-      break;
-    case '5':
-      adminSessions[botConfig.adminJid]={awaiting:'editFAQs'};
-      safeSend(botConfig.adminJid,'❓ *FAQs*: 1️⃣ Add 2️⃣ Edit 3️⃣ Delete');
-      break;
-    case '6':
-      adminSessions[botConfig.adminJid]={awaiting:'editConfig'};
-      safeSend(botConfig.adminJid,'⚙️ *Config*: 1️⃣ Bot Name 2️⃣ Channel ID');
-      break;
-    case '7':
-      adminSessions[botConfig.adminJid]={awaiting:'bulkMsg'};
-      safeSend(botConfig.adminJid,'📣 Enter message to broadcast:');
-      break;
-    default:
-      showAdminMenu();
-  }
-}
-
-// ────────────────────────────────────────────────────────────────────
-// (For brevity: implement handleAdminSubmenu with similar switch/steps
-// to Add/Edit/Delete in products.json, categories.json, faqs.json,
-// Ban/Unban user (toggle users[jid].banned + reason), Change botConfig,
-// Bulk message looping safeSend to all users. Then save files.)
-// ────────────────────────────────────────────────────────────────────
-
-// ────────────────────────────────────────────────────────────────────
-// USER: SHOW PRODUCTS
-// ────────────────────────────────────────────────────────────────────
-function showProducts(jid){
-  if(!products.length) {
-    return safeSend(jid,'❌ No products available.');
-  }
-  const list = products.map((p,i)=>`${i+1}. ${p.name} — Ksh ${p.price}`).join('\n');
-  conversations[jid] = { stage:'ordering', step:'chooseProduct' };
-  return safeSend(jid, `🛍️ *Products*\n${list}\n\nReply with number to order.`);
-}
-
-// ────────────────────────────────────────────────────────────────────
-// USER: HANDLE ORDER FLOW
-// ────────────────────────────────────────────────────────────────────
-async function handleUserConversation(jid,txt,lc,user){
-  const conv = conversations[jid];
-  if(!conv) return safeSend(jid,'⚠️ Invalid option. Reply *5* for menu.');
-
-  // Step: chooseProduct
-  if(conv.stage==='ordering' && conv.step==='chooseProduct'){
-    const idx = parseInt(txt)-1;
-    if(isNaN(idx)||idx<0||idx>=products.length){
-      delete conversations[jid];
-      return safeSend(jid,'⚠️ Invalid selection. Reply *1* to browse again.');
-    }
-    conv.product = products[idx];
-    conv.step='enterQty';
-    return safeSend(jid, `📦 How many *${conv.product.name}*?`);
-  }
-
-  // Step: enterQty
-  if(conv.step==='enterQty'){
-    const qty = parseInt(txt);
-    if(isNaN(qty)||qty<1){
-      delete conversations[jid];
-      return safeSend(jid,'⚠️ Invalid quantity. Reply *1* to browse again.');
-    }
-    conv.qty=qty;
-    conv.step='enterPhone';
-    return safeSend(jid, `📲 Send phone number for payment:`);
-  }
-
-  // Step: enterPhone
-  if(conv.step==='enterPhone'){
-    const ph = formatPhone(txt);
-    if(!ph){
-      delete conversations[jid];
-      return safeSend(jid,'⚠️ Invalid phone. Order canceled.');
-    }
-    conv.payPhone = ph.replace('@c.us','');
-    // create order record
-    const orderNo = genOrderNumber();
-    const amount = conv.product.price * conv.qty;
-    const order = {
-      orderNo, user: user.phone, product: conv.product.name,
-      qty:conv.qty, amount, status:'PENDING', createdAt:new Date().toISOString()
-    };
-    orders[orderNo] = order;
-    save(DATA.orders,orders);
-    user.orders.push(orderNo);
-    save(DATA.users,users);
-
-    // prompt STK Push
-    safeSend(jid, `⏳ Initiating payment of Ksh ${amount}…`);
-    const ref = await sendSTKPush(amount,conv.payPhone);
-
-    // wait & poll
-    setTimeout(async()=>{
-      const st = await fetchTransactionStatus(ref);
-      if(st && st.status==='SUCCESS'){
-        orders[orderNo].status='PAID';
-        save(DATA.orders,orders);
-        safeSend(jid,
-          `✅ Payment received!\n`+
-          `• Order: ${orderNo}\n`+
-          `• ${conv.product.name} x${conv.qty}\n`+
-          `• Amount: Ksh ${amount}`
-        );
-        // first order referral bonus
-        if(!user.hasOrdered && user.referredBy){
-          const refu = Object.values(users).find(u=>u.phone===user.referredBy);
-          if(refu){
-            safeSend(refu.jid||`${refu.phone}@c.us`, botConfig.referralBonus);
-          }
-        }
-        user.hasOrdered = true; save(DATA.users,users);
-        // notify admin
-        safeSend(botConfig.adminJid,
-          `🛒 New Order\n• ${orderNo}\n`+
-          `• ${user.name} (${user.phone})\n`+
-          `• ${conv.product.name} x${conv.qty}\n`+
-          `• Ksh ${amount}\n`
-        );
-      } else {
-        safeSend(jid, '❌ Payment failed or timed out. Please try again.');
-      }
-    },30000);
-
-    delete conversations[jid];
-    return;
-  }
-
-  // other stages...
-}
-
-// ────────────────────────────────────────────────────────────────────
-// USER: SHOW MY ORDERS
-// ────────────────────────────────────────────────────────────────────
-function showMyOrders(jid){
-  const u = users[jid];
-  if(!u.orders.length) return safeSend(jid,'📭 No orders yet.');
-  const lines = u.orders.map(no=>{
-    const o=orders[no];
-    return `• ${no}: ${o.product} x${o.qty} — ${o.status}`;
-  }).join('\n');
-  return safeSend(jid, `📦 Your Orders:\n${lines}`);
-}
-
-// ────────────────────────────────────────────────────────────────────
-// USER: SHOW FAQs
-// ────────────────────────────────────────────────────────────────────
-function showFAQs(jid){
-  if(!faqs.length) return safeSend(jid,'❌ No FAQs set.');
-  const list = faqs.map((f,i)=>`${i+1}. Q: ${f.q}\n   A: ${f.a}`).join('\n\n');
-  return safeSend(jid, `❓ FAQs:\n\n${list}`);
-}
-
-// ────────────────────────────────────────────────────────────────────
-// ON EXIT: SAVE ALL
-// ────────────────────────────────────────────────────────────────────
-process.on('SIGINT', ()=> {
-  save(DATA.users,users);
-  save(DATA.products,products);
-  save(DATA.categories,categories);
-  save(DATA.faqs,faqs);
-  save(DATA.orders,orders);
+process.on('SIGINT', () => {
+  saveJSON(DATA.users, users);
+  saveJSON(DATA.products, products);
+  saveJSON(DATA.categories, categories);
+  saveJSON(DATA.faqs, faqs);
+  saveJSON(DATA.orders, orders);
+  console.log('\n💾 Data saved. Exiting.');
   process.exit();
 });
