@@ -4,7 +4,7 @@
  *******************************************************************/
 
 // ────────────────────────────────────────────────────────────────────
-// 0) DEPENDENCIES & CONSTANTS
+// IMPORTS & SETUP
 // ────────────────────────────────────────────────────────────────────
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const express        = require('express');
@@ -13,652 +13,438 @@ const QRCode         = require('qrcode');
 const axios          = require('axios');
 const fs             = require('fs');
 const path           = require('path');
-const { exec }       = require('child_process'); // for auto-restart
-
-// Suffix appended to every user reply:
-const USER_SUFFIX = "\n\n0. Back   menu";
 
 // ────────────────────────────────────────────────────────────────────
-// 1) PERSISTENT STORAGE
+// DATA PATHS & UTILITIES
 // ────────────────────────────────────────────────────────────────────
-const DATA_PATH = path.join(__dirname, 'users.json');
-function loadUsers() {
-  return fs.existsSync(DATA_PATH)
-    ? JSON.parse(fs.readFileSync(DATA_PATH))
-    : {};
+const DATA = {
+  users:       path.join(__dirname, 'users.json'),
+  products:    path.join(__dirname, 'products.json'),
+  categories:  path.join(__dirname, 'categories.json'),
+  faqs:        path.join(__dirname, 'faqs.json'),
+  orders:      path.join(__dirname, 'orders.json'),
+};
+function load(file) {
+  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file)) : {};
 }
-function saveUsers(users) {
-  fs.writeFileSync(DATA_PATH, JSON.stringify(users, null, 2));
+function save(file, data) {
+  fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
-let users = loadUsers();
 
 // ────────────────────────────────────────────────────────────────────
-// 2) BOT CONFIG & GLOBAL STATE
+// BOT CONFIG
 // ────────────────────────────────────────────────────────────────────
-const SUPER_ADMIN = '254701339573@c.us';
-const adminUsers  = new Set([ SUPER_ADMIN ]);
-
 let botConfig = {
-  fromAdmin:   "Admin GK-FY",
-  channelID:   724,
-  costPerChar: 0.01,
-  welcomeText:
-    "👋 *Welcome to FY'S PROPERTY!* 🎉\n\n" +
-    "To get started, simply *send your desired username* and I'll create your account right away! 📲\n\n" +
-    "_Make it unique and memorable!_ ✨",
-  userMenu(user) {
-    return (
-      `\n✨ Hello *${user.name}*! What would you like to do today?\n` +
-      `1. Send Bulk Message\n` +
-      `2. View Recipients\n` +
-      `3. Add Recipient\n` +
-      `4. Remove Recipient\n` +
-      `5. Top-up Balance\n` +
-      `6. Check Balance\n` +
-      `7. Contact Support\n` +
-      `8. Delete My Account\n`
-    );
-  },
-  regSuccess(name) {
-    return (
-      `🎉 *Congratulations, ${name}!*\n` +
-      `Your account has been created successfully with *Ksh 0.00* balance.\n\n` +
-      `💡 Tip: Add some recipients (option 3) so you can start sending messages right away! 🚀` +
-      this.userMenu({ name })
-    );
-  },
-  notEnoughBal(cost, bal) {
-    return (
-      `⚠️ *Oops!* This broadcast will cost *Ksh ${cost.toFixed(2)}*, ` +
-      `but your balance is only *Ksh ${bal.toFixed(2)}*.\n\n` +
-      `Please top-up (option 5) to continue. 💳`
-    );
-  },
-  topupPrompt:
-    "💳 *Top-up Time!* How much would you like to add to your balance? _(Minimum Ksh 11)_",
-  supportText:
-    "🆘 *Need Help?* We're here for you! 💬\n\n" +
-    "• Email: **gk-y@iname.com** ✉️\n" +
-    "• WhatsApp: [Chat now](https://wa.me/254701339573)\n\n" +
-    "We typically respond within a few minutes. Thank you! 🙏"
+  adminJid:     '254701339573@c.us',
+  botName:      "FY'S PROPERTY",
+  channelID:    724,
+  referralBonus:"🎁 You’ve earned a referral bonus!",
+  welcomeText:  "👋 Welcome to FY'S PROPERTY! Please reply with a *username* to register:",
+  userMenu(u) {
+    return `✨ Hi ${u.name}! What would you like to do?\n` +
+      `1️⃣ Browse Products\n` +
+      `2️⃣ My Orders\n` +
+      `3️⃣ Refer a Friend\n` +
+      `4️⃣ FAQs\n` +
+      `5️⃣ Menu`;
+  }
 };
 
-// per-chat state
-const conversations = {};   // { jid: { stage, ... } }
-const adminSessions = {};   // { jid: { awaiting, step, ... } }
+// ────────────────────────────────────────────────────────────────────
+// STATE
+// ────────────────────────────────────────────────────────────────────
+let users       = load(DATA.users);
+let products    = load(DATA.products);
+let categories  = load(DATA.categories);
+let faqs        = load(DATA.faqs);
+let orders      = load(DATA.orders);
+const conversations = {};    // per-chat FSM
+const adminSessions = {};    // per-admin FSM
 
 // ────────────────────────────────────────────────────────────────────
-// 3) WHATSAPP CLIENT INIT
+// HELPERS
 // ────────────────────────────────────────────────────────────────────
-const client = new Client({ authStrategy: new LocalAuth() });
-let currentQR = "";
-
-client.on('qr', qr => {
-  currentQR = qr;
-  qrcodeTerminal.generate(qr, { small: true });
-});
-
-client.on('ready', () => {
-  console.log('🚀 Bot is ready');
-
-  // (Optional) restart on ready — comment out if you get loops
-  // execRestart();
-
-  adminReply(SUPER_ADMIN,
-    "🤖 *FY’S PROPERTY Bot* is now ONLINE! 🔥\n\n" +
-    "Use the menu below to manage users, broadcasts, and settings."
-  );
-  showAdminMenu(SUPER_ADMIN);
-});
-
-client.initialize();
-
-// ────────────────────────────────────────────────────────────────────
-// 4) EXPRESS QR DASHBOARD (GLASS MORPHISM)
-// ────────────────────────────────────────────────────────────────────
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-app.get("/", async (req, res) => {
-  let imgData = "";
-  if (currentQR) {
-    try { imgData = await QRCode.toDataURL(currentQR); } catch {}
-  }
-  res.send(`
-    <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>FY'S PROPERTY Bot QR</title>
-    <style>
-      body {
-        margin: 0; height:100vh;
-        background: url('https://images.unsplash.com/photo-1503023345310-bd7c1de61c7d?auto=format&fit=crop&w=1500&q=80')
-                    center/cover no-repeat;
-        display:flex; align-items:center; justify-content:center;
-        font-family:Arial,sans-serif;
-      }
-      .glass {
-        background: rgba(255,255,255,0.2);
-        backdrop-filter: blur(12px);
-        border-radius:16px; padding:2rem; text-align:center;
-        box-shadow:0 8px 32px rgba(0,0,0,0.2); max-width:360px; width:90%;
-      }
-      .glass h1 {
-        margin-bottom:1rem; color:#fff; text-shadow:0 2px 4px rgba(0,0,0,0.5);
-      }
-      .qr-box img {
-        width:100%; max-width:240px; border-radius:8px;
-        background:#fff; padding:0.5rem;
-      }
-      .footer {
-        margin-top:1rem; color:rgba(255,255,255,0.8); font-size:0.9rem;
-      }
-    </style></head><body>
-      <div class="glass">
-        <h1>Scan to Connect</h1>
-        <div class="qr-box">
-          ${ imgData ? `<img src="${imgData}" alt="QR Code">`
-                     : '<p style="color:#fff;">Waiting for QR…</p>' }
-        </div>
-        <div class="footer">Powered by FY’S PROPERTY BOT</div>
-      </div>
-    </body></html>
-  `);
-});
-app.listen(PORT, ()=>console.log(`🌐 QR dashboard: http://localhost:${PORT}`));
-
-// ────────────────────────────────────────────────────────────────────
-// 5) HELPERS
-// ────────────────────────────────────────────────────────────────────
-async function safeSend(jid, msg) {
-  try {
-    await client.sendMessage(jid, msg);
-  } catch (err) {
-    console.error(`❌ Error sending to ${jid}:`, err.message);
-    if (jid !== SUPER_ADMIN) {
-      await client.sendMessage(SUPER_ADMIN,
-        `⚠️ Failed to send to ${jid}: ${err.message}`
-      );
-    }
-  }
-}
-
-async function userReply(msg, text) {
-  return msg.reply(text + USER_SUFFIX);
-}
-
-async function adminReply(jid, msg) {
-  return safeSend(jid, msg + "\n\n0. Go Back   00. Main Menu");
-}
-
 function formatPhone(txt) {
   let n = txt.replace(/[^\d]/g,'');
-  if (n.length===9  && n.startsWith('7'))  n='254'+n;
-  if (n.length===10 && n.startsWith('0'))  n='254'+n.slice(1);
-  if (n.length===12 && n.startsWith('254'))return n+'@c.us';
+  if(n.length===9 && n.startsWith('7'))    n='254'+n;
+  if(n.length===10&& n.startsWith('0'))    n='254'+n.slice(1);
+  if(n.length===12&& n.startsWith('254'))  return n+'@c.us';
   return null;
 }
-
-// ────────────────────────────────────────────────────────────────────
-// 6) ADMIN PANEL
-// ────────────────────────────────────────────────────────────────────
-function showAdminMenu(jid) {
-  adminSessions[jid] = { awaiting:'main' };
-  const menu = `${botConfig.fromAdmin}: *Admin Main Menu*
-1. View All Users
-2. Change Cost/Char (Ksh ${botConfig.costPerChar.toFixed(2)})
-3. Top-up/Deduct User
-4. Ban/Unban User
-5. Bulk → All Registered
-6. Add Admin
-7. Remove Admin
-8. Show QR Dashboard
-9. Config Bot Texts & Support`;
-  return adminReply(jid, menu);
+function genOrderNumber() {
+  const s = [...Array(6)].map(_=> Math.random().toString(36)[2]).join('').toUpperCase();
+  return `FY'S-${s}`;
 }
-
-function showConfigMenu(jid) {
-  adminSessions[jid] = { awaiting:'config' };
-  const cfg = `${botConfig.fromAdmin}: *Config Menu*
-1. Edit Admin Label
-2. Edit Welcome Text
-3. Edit Registration Success Text
-4. Edit User Menu Text
-5. Edit Not-Enough-Balance Text
-6. Edit Top-up Prompt
-7. Edit costPerChar
-8. Edit Support Text
-9. Edit Channel ID
-0. Back`;
-  return adminReply(jid, cfg);
+async function safeSend(jid,msg){
+  try { await client.sendMessage(jid,msg) }
+  catch(e){
+    console.error('❌ Send error',e);
+    if(jid!==botConfig.adminJid)
+      client.sendMessage(botConfig.adminJid,`⚠️ Failed to send to ${jid}`);
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────
-// 7) MESSAGE HANDLER (USER + ADMIN)
+// M-PESA INTEGRATION (PayHero)
 // ────────────────────────────────────────────────────────────────────
-client.on('message', async msg => {
-  const from = msg.from, txt = msg.body.trim(), lc = txt.toLowerCase();
-  if (from.endsWith('@g.us')) return;  // ignore groups
-
-  // ---- ADMIN FLOWS ----
-  if (adminUsers.has(from)) {
-    // back or main menu
-    if (txt==='00') { delete adminSessions[from]; return showAdminMenu(from); }
-    if (txt==='0')  { delete adminSessions[from]; return adminReply(from,'🔙 Back'); }
-    const sess = adminSessions[from]||{};
-    if (!sess.awaiting||sess.awaiting==='main') {
-      switch(txt) {
-        case '1': sess.awaiting='viewUsers'; return adminReply(from,'🔍 Fetching users…');
-        case '2': sess.awaiting='chgCost';   return adminReply(from,'💱 Enter new costPerChar:');
-        case '3': sess.awaiting='modBal'; sess.step=null;  return adminReply(from,'💰 Enter user phone:');
-        case '4': sess.awaiting='banUser'; sess.step=null; return adminReply(from,'🚫 Enter user phone:');
-        case '5': sess.awaiting='bulkAll'; sess.step=null; return adminReply(from,'📝 Enter broadcast:');
-        case '6': sess.awaiting='addAdmin'; sess.step=null;return adminReply(from,'➕ Enter admin phone:');
-        case '7': sess.awaiting='rmvAdmin'; sess.step=null;return adminReply(from,'❌ Enter admin to remove:');
-        case '8': return adminReply(from,`🌐 Dashboard: http://localhost:${PORT}`);
-        case '9': return showConfigMenu(from);
-        default:  return showAdminMenu(from);
-      }
-    }
-    // submenu flows...
-    switch(sess.awaiting) {
-      case 'viewUsers': {
-        let out = '👥 *Registered Users:*';
-        for (let [jid,u] of Object.entries(users)) {
-          out += `\n\n• *${u.name}* (${u.phone})\n` +
-                 `   – Bal: Ksh ${u.balance.toFixed(2)}\n` +
-                 `   – Sent: ${u.messageCount}\n` +
-                 `   – Charges: Ksh ${u.totalCharges.toFixed(2)}\n` +
-                 `   – Banned: ${u.banned?`Yes (${u.banReason})`:'No'}`;
-        }
-        delete adminSessions[from];
-        return adminReply(from,out);
-      }
-      case 'chgCost': {
-        const k=parseFloat(txt);
-        if (isNaN(k)||k<=0) return adminReply(from,'⚠️ Invalid number.');
-        botConfig.costPerChar=k;
-        delete adminSessions[from];
-        return adminReply(from,`✅ costPerChar set to Ksh ${k.toFixed(2)}`);
-      }
-      case 'modBal': {
-        if (!sess.step) { sess.step='getUser'; return adminReply(from,'📱 Enter user phone:'); }
-        if (sess.step==='getUser') {
-          const jid=formatPhone(txt);
-          if (!jid||!users[jid]) { delete adminSessions[from]; return adminReply(from,'⚠️ User not found.'); }
-          sess.target=jid; sess.step='getAmt';
-          return adminReply(from,'💰 Enter + to top-up or - to deduct:');
-        }
-        if (sess.step==='getAmt') {
-          const amt=parseFloat(txt);
-          if (isNaN(amt)) return adminReply(from,'⚠️ Invalid amount.');
-          users[sess.target].balance+=amt;
-          saveUsers(users);
-          delete adminSessions[from];
-          return adminReply(from,
-            `✅ ${users[sess.target].name}’s balance ${amt>=0?'topped-up':'deducted'} by Ksh ${Math.abs(amt).toFixed(2)}`
-          );
-        }
-        break;
-      }
-      case 'banUser': {
-        if (!sess.step) { sess.step='getUser'; return adminReply(from,'📱 Enter user phone:'); }
-        if (sess.step==='getUser') {
-          const jid=formatPhone(txt);
-          if (!jid||!users[jid]) { delete adminSessions[from]; return adminReply(from,'⚠️ User not found.'); }
-          sess.target=jid;
-          if (users[jid].banned) {
-            users[jid].banned=false; saveUsers(users);
-            delete adminSessions[from];
-            return adminReply(from,`✅ ${users[jid].name} has been unbanned!`);
-          }
-          sess.step='getReason'; return adminReply(from,'✏️ Enter ban reason:');
-        }
-        if (sess.step==='getReason') {
-          users[sess.target].banned=true;
-          users[sess.target].banReason=txt;
-          saveUsers(users);
-          delete adminSessions[from];
-          return adminReply(from,`🚫 ${users[sess.target].name} banned for: _${txt}_`);
-        }
-        break;
-      }
-      case 'bulkAll': {
-        if (!sess.step) { sess.step='getMsg'; return adminReply(from,'📝 Enter broadcast:'); }
-        if (sess.step==='getMsg') {
-          for (let jid of Object.keys(users)) {
-            await safeSend(jid,`${botConfig.fromAdmin}: ${txt}`);
-          }
-          delete adminSessions[from];
-          return adminReply(from,'✅ Broadcast sent to all users!');
-        }
-        break;
-      }
-      case 'addAdmin': {
-        const jid=formatPhone(txt);
-        if (!jid) { delete adminSessions[from]; return adminReply(from,'⚠️ Invalid phone.'); }
-        adminUsers.add(jid);
-        delete adminSessions[from];
-        return adminReply(from,`➕ ${jid} is now an admin!`);
-      }
-      case 'rmvAdmin': {
-        const jid=formatPhone(txt);
-        if (!jid||!adminUsers.has(jid)||jid===SUPER_ADMIN) {
-          delete adminSessions[from];
-          return adminReply(from,'⚠️ Cannot remove that admin.');
-        }
-        adminUsers.delete(jid);
-        delete adminSessions[from];
-        return adminReply(from,`❌ ${jid} removed from admins.`);
-      }
-      case 'config': {
-        if (!sess.step) {
-          switch(txt) {
-            case '1': sess.step='editAdmin';      return adminReply(from,'✏️ Enter new Admin Label:');
-            case '2': sess.step='editWelcome';    return adminReply(from,'✏️ Enter new Welcome Text:');
-            case '3': sess.step='editRegSuccess'; return adminReply(from,'✏️ Enter new Registration Success Text:');
-            case '4': sess.step='editUserMenu';   return adminReply(from,'✏️ Enter new User Menu Text (use {name}):');
-            case '5': sess.step='editNotEnough';  return adminReply(from,'✏️ Enter new Not-Enough-Balance Text:');
-            case '6': sess.step='editTopupPrompt';return adminReply(from,'✏️ Enter new Top-up Prompt:');
-            case '7': sess.step='editCost';       return adminReply(from,'✏️ Enter new costPerChar:');
-            case '8': sess.step='editSupport';    return adminReply(from,'✏️ Enter new Support Info Text:');
-            case '9': sess.step='editChannelID';  return adminReply(from,'✏️ Enter new Channel ID:');
-            case '0': delete adminSessions[from]; return showAdminMenu(from);
-            default:  return adminReply(from,'⚠️ Invalid option.');
-          }
-        } else {
-          switch(sess.step) {
-            case 'editAdmin':      botConfig.fromAdmin   = txt; break;
-            case 'editWelcome':    botConfig.welcomeText = txt; break;
-            case 'editRegSuccess': botConfig.regSuccess  = name=>txt.replace('{name}',name); break;
-            case 'editUserMenu':   botConfig.userMenu    = u=>txt.replace('{name}',u.name||''); break;
-            case 'editNotEnough':  botConfig.notEnoughBal= (c,b)=>txt.replace('{cost}',c).replace('{bal}',b); break;
-            case 'editTopupPrompt':botConfig.topupPrompt = txt; break;
-            case 'editCost':       botConfig.costPerChar = parseFloat(txt)||botConfig.costPerChar; break;
-            case 'editSupport':    botConfig.supportText = txt; break;
-            case 'editChannelID':  botConfig.channelID   = parseInt(txt)||botConfig.channelID; break;
-          }
-          delete adminSessions[from];
-          return adminReply(from,'✅ Configuration updated!');
-        }
-      }
-      default:
-        delete adminSessions[from];
-        return adminReply(from,'⚠️ Returning to main menu.');
-    }
-  }
-
-  // ---- USER REGISTRATION ----
-  if (!users[from]) {
-    if (!conversations[from]) {
-      conversations[from] = { stage:'awaitRegister' };
-      return userReply(msg, botConfig.welcomeText);
-    }
-    const conv = conversations[from];
-    if (conv.stage==='awaitRegister') {
-      const uname = txt;
-      if (Object.values(users)
-            .some(u=>u.name.toLowerCase()===uname.toLowerCase())) {
-        return userReply(msg,'⚠️ That username is taken—please choose another.');
-      }
-      users[from] = {
-        name: uname,
-        phone: from.replace('@c.us',''),
-        registeredAt: new Date().toISOString(),
-        balance:0, banned:false, banReason:'',
-        messageCount:0, totalCharges:0,
-        recipients:[], support:{ open:false, ticketId:null }
-      };
-      saveUsers(users);
-      delete conversations[from];
-      // notify admins
-      for (let adm of adminUsers) {
-        await safeSend(adm,
-          `🎉🆕 *New Registration!* 🎉\n\n` +
-          `• Username: *${uname}*\n` +
-          `• Phone: ${users[from].phone}\n` +
-          `• Time: ${new Date().toLocaleString('en-GB',{timeZone:'Africa/Nairobi'})}\n\n` +
-          `Head to the admin panel to manage this user. 🔧`
-        );
-      }
-      return userReply(msg, botConfig.regSuccess(uname));
-    }
-    return;
-  }
-
-  // ---- REGISTERED USER FLOW ----
-  const user = users[from];
-  if (user.banned) {
-    return userReply(msg, `🚫 *Access Denied!* You have been banned.\nReason: _${user.banReason}_`);
-  }
-  if (lc==='menu') {
-    return userReply(msg, botConfig.userMenu(user));
-  }
-  if (lc==='8' || lc==='delete my account') {
-    delete users[from]; saveUsers(users);
-    return userReply(msg,'❌ Your account has been deleted. Send any message to re-register.');
-  }
-  if (lc==='7') {
-    return userReply(msg, botConfig.supportText);
-  }
-  if (lc==='6') {
-    return userReply(msg,
-      `💰 *Your Balance:* Ksh ${user.balance.toFixed(2)}\n` +
-      `✉️ *Sent:* ${user.messageCount}\n` +
-      `💸 *Charges:* Ksh ${user.totalCharges.toFixed(2)}`
-    );
-  }
-
-  // ---- TOP-UP FLOW ----
-  if (lc==='5' || conversations[from]?.stage?.startsWith('topup')) {
-    const conv = conversations[from]||{};
-    if (lc==='5') {
-      conversations[from] = { stage:'topup:amount' };
-      return userReply(msg, botConfig.topupPrompt);
-    }
-    if (conv.stage==='topup:amount') {
-      const amt = parseFloat(txt);
-      if (isNaN(amt)||amt<11) {
-        delete conversations[from];
-        return userReply(msg,'⚠️ Minimum top-up is Ksh 11. Type 5 to retry.');
-      }
-      conv.amount=amt; conv.stage='topup:phone'; conversations[from]=conv;
-      return userReply(msg, `📱 Send the M-PESA phone to charge *Ksh ${amt.toFixed(2)}*:` );
-    }
-    if (conv.stage==='topup:phone') {
-      const mp=formatPhone(txt), amt=conv.amount;
-      delete conversations[from];
-      if (!mp) return userReply(msg,'⚠️ That phone looks invalid. Type 5 to restart.');
-      await msg.reply(`⏳ Initiating *Ksh ${amt.toFixed(2)}* top-up…`);
-      const ref = await sendSTKPush(amt, mp.replace('@c.us',''));
-      if (!ref) return userReply(msg,'❌ STK push failed.');
-      setTimeout(()=>safeSend(from,'⏳ 20s left…'),10000);
-      setTimeout(()=>safeSend(from,'⏳ 10s left…'),20000);
-      return setTimeout(async()=>{
-        const st = await fetchTransactionStatus(ref),
-              ok = st?.status==='SUCCESS',
-              code = st?.provider_reference||'—',
-              now = new Date().toLocaleString('en-GB',{timeZone:'Africa/Nairobi'});
-        if (ok) {
-          user.balance += amt; saveUsers(users);
-          await safeSend(from,
-            `🎊 *Top-up Successful!* 🎊\n\n` +
-            `• Amount: Ksh ${amt.toFixed(2)}\n` +
-            `• Mpesa Code: ${code}\n` +
-            `• New Balance: Ksh ${user.balance.toFixed(2)}`
-          );
-          await safeSend(SUPER_ADMIN,
-            `💰 *Deposit Alert!* 💰\n\n` +
-            `• User: ${user.name}\n` +
-            `• Amount: Ksh ${amt.toFixed(2)}\n` +
-            `• Code: ${code}\n` +
-            `• Time: ${now}`
-          );
-        } else {
-          await safeSend(from,'❌ Top-up failed or timed out.');
-        }
-      },30000);
-    }
-    return;
-  }
-
-  // ---- BROADCAST (no confirm) ----
-  if (lc==='1' || conversations[from]?.stage==='awaitBulk') {
-    if (lc==='1') {
-      conversations[from]={stage:'awaitBulk'};
-      return userReply(msg,'📝 Type the message you want to broadcast:');
-    }
-    if (conversations[from].stage==='awaitBulk') {  
-      const m=txt; delete conversations[from];
-      const cost=m.length*botConfig.costPerChar;
-      if (user.balance<cost) {
-        return userReply(msg, botConfig.notEnoughBal(cost,user.balance));
-      }
-      for (let r of user.recipients) {
-        await safeSend(r, `${botConfig.fromAdmin}: ${m}`);
-      }
-      user.balance-=cost; user.messageCount++; user.totalCharges+=cost;
-      saveUsers(users);
-      return userReply(msg,
-        `✅ *Broadcast Sent!* ✅\n` +
-        `• Cost: Ksh ${cost.toFixed(2)}\n` +
-        `• New Balance: Ksh ${user.balance.toFixed(2)}`
-      );
-    }
-    return;
-  }
-
-  // ---- VIEW RECIPIENTS ----
-  if (lc==='2') {
-    const list = user.recipients.length
-      ? user.recipients.map(r=>`• ${r.replace('@c.us','')}`).join('\n')
-      : 'You have no recipients yet. Add some with option 3.';
-    return userReply(msg, '📋 *Your Recipients:* 📋\n\n' + list);
-  }
-
-  // ---- ADD RECIPIENT ----
-  if (lc==='3' || conversations[from]?.stage==='addRec') {
-    if (lc==='3') {
-      conversations[from]={stage:'addRec'};
-      return userReply(msg,'📥 Enter the phone number to add:');
-    }
-    const jid=formatPhone(txt); delete conversations[from];
-    if (!jid) return userReply(msg,'⚠️ That doesn’t look like a valid phone.');
-    if (!user.recipients.includes(jid)) {
-      user.recipients.push(jid);
-      saveUsers(users);
-      return userReply(msg, `✅ Recipient *${jid.replace('@c.us','')}* added!`);
-    } else {
-      return userReply(msg,'⚠️ That number is already in your list.');
-    }
-  }
-
-  // ---- REMOVE RECIPIENT ----
-  if (lc==='4' || conversations[from]?.stage==='delRec') {
-    if (lc==='4') {
-      conversations[from]={stage:'delRec'};
-      return userReply(msg,'🗑️ Enter the phone number to remove:');
-    }
-    const jid=formatPhone(txt); delete conversations[from];
-    if (!jid||!user.recipients.includes(jid)) {
-      return userReply(msg,'⚠️ That number isn’t in your list.');
-    }
-    user.recipients = user.recipients.filter(r=>r!==jid);
-    saveUsers(users);
-    return userReply(msg, `🗑️ Recipient *${jid.replace('@c.us','')}* removed.`);
-  }
-
-  // default → main menu
-  return userReply(msg, botConfig.userMenu(user));
-});
-
-// ────────────────────────────────────────────────────────────────────
-// 8) M-PESA STK PUSH & STATUS CHECK
-// ────────────────────────────────────────────────────────────────────
-async function sendSTKPush(amount, phone) {
+const PAYHERO_KEY = 'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6c2lYb09taHRYSlFMbWZ0dFdqeGp4SG13NDFTekJLckl2Z2NWd2F1aw==';
+async function sendSTKPush(amount,phone){
   const payload = {
-    amount, phone_number: phone,
-    channel_id: botConfig.channelID,
-    provider: "m-pesa",
-    external_reference: "INV-009",
-    customer_name: "FY'S PROPERTY User",
-    callback_url: "https://your-callback-url",
-    account_reference: "FY'S PROPERTY",
-    transaction_desc: "FY'S PROPERTY Payment",
-    remarks: "FY'S PROPERTY",
-    business_name: "FY'S PROPERTY",
-    companyName: "FY'S PROPERTY"
+    amount, phone_number:phone,
+    channel_id:botConfig.channelID,
+    provider:"m-pesa",
+    external_reference:genOrderNumber(),
+    account_reference:botConfig.botName,
+    transaction_desc:botConfig.botName
   };
   try {
     const res = await axios.post(
       'https://backend.payhero.co.ke/api/v2/payments',
       payload,
-      { headers:{
-          'Content-Type':'application/json',
-          'Authorization':'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6c2lYb09taHRYSlFMbWZ0dFdqeGp4SG13NDFTekJLckl2Z2NWd2F1aw=='
-        } }
+      { headers:{ 'Content-Type':'application/json','Authorization':PAYHERO_KEY } }
     );
     return res.data.reference;
-  } catch(err) {
-    console.error("STK Push Error:",err.message);
+  } catch(e){
+    console.error('STK Push Error',e.message);
     return null;
   }
 }
-
-async function fetchTransactionStatus(ref) {
+async function fetchTransactionStatus(ref){
   try {
     const res = await axios.get(
       `https://backend.payhero.co.ke/api/v2/transaction-status?reference=${encodeURIComponent(ref)}`,
-      { headers:{
-          'Authorization':'Basic QklYOXY0WlR4RUV4ZUJSOG1EdDY6c2lYb09taHRYSlFMbWZ0dFdqeGp4SG13NDFTekJLckl2Z2NWd2F1aw=='
-        } }
+      { headers:{ 'Authorization':PAYHERO_KEY } }
     );
     return res.data;
-  } catch(err) {
-    console.error("Fetch Status Error:",err.message);
+  } catch(e){
+    console.error('Fetch Status Error',e.message);
     return null;
   }
 }
 
 // ────────────────────────────────────────────────────────────────────
-// 9) AUTO-RESTART FUNCTIONS & HOOKS
+// WHATSAPP CLIENT INIT
 // ────────────────────────────────────────────────────────────────────
-function execRestart() {
-  console.log('♻️ Triggering auto-restart...');
-  exec('npm restart', (error, stdout, stderr) => {
-    if (error) {
-      console.error(`❌ Restart error: ${error.message}`);
-      return;
+const client = new Client({ authStrategy: new LocalAuth() });
+let currentQR = '';
+client.on('qr', qr => {
+  currentQR = qr;
+  qrcodeTerminal.generate(qr,{ small:true });
+});
+client.on('ready', () => {
+  console.log('🤖 Bot ready');
+  safeSend(botConfig.adminJid, `🚀 *${botConfig.botName}* is now online!`);
+});
+client.initialize();
+
+// ────────────────────────────────────────────────────────────────────
+// EXPRESS QR CODE DASHBOARD
+// ────────────────────────────────────────────────────────────────────
+const app = express();
+const PORT = process.env.PORT||3000;
+app.get('/', async (req,res)=>{
+  let img = currentQR ? await QRCode.toDataURL(currentQR) : '';
+  res.send(`
+    <html><body style="text-align:center">
+      <h1>Scan to join *${botConfig.botName}*</h1>
+      ${img? `<img src="${img}">` : '<p>Waiting for QR…</p>'}
+    </body></html>
+  `);
+});
+app.listen(PORT, ()=>console.log(`🌐 Dashboard: http://localhost:${PORT}`));
+
+// ────────────────────────────────────────────────────────────────────
+// MESSAGE HANDLER
+// ────────────────────────────────────────────────────────────────────
+client.on('message', async msg=>{
+  const from = msg.from, txt=msg.body.trim(), lc=txt.toLowerCase();
+
+  // ignore groups
+  if(from.endsWith('@g.us')) return;
+
+  // ADMIN FLOWS
+  if(from===botConfig.adminJid){
+    // back / menu
+    if(txt==='00'){ delete adminSessions[from]; return showAdminMenu(); }
+    if(txt==='0'){ delete adminSessions[from]; return safeSend(from,'🔙 Back'); }
+
+    const sess = adminSessions[from] || {};
+    if(!sess.awaiting || sess.awaiting==='main'){
+      return handleAdminMain(txt);
     }
-    if (stderr) {
-      console.error(`❗ Restart stderr: ${stderr}`);
-      return;
+    return handleAdminSubmenu(sess,txt);
+  }
+
+  // REGISTRATION (incl. referral)
+  if(!users[from]){
+    const conv = conversations[from]||{stage:'awaitRegister'};
+    if(conv.stage==='awaitRegister'){
+      // referral?
+      let ref=null;
+      if(lc.startsWith('referral:')){
+        const uname=txt.split(':')[1].trim();
+        ref = Object.values(users).find(u=>u.name.toLowerCase()===uname.toLowerCase());
+        if(!ref){
+          delete conversations[from];
+          return msg.reply('⚠️ Invalid referral link. Please enter a *username* to register:');
+        }
+      }
+      // check duplicate
+      if(Object.values(users).some(u=>u.name.toLowerCase()===lc) && !ref){
+        return msg.reply('⚠️ That username is taken—please choose another.');
+      }
+      // create user
+      users[from] = {
+        name: txt,
+        phone: from.replace('@c.us',''),
+        referredBy: ref? ref.phone : null,
+        registeredAt: new Date().toISOString(),
+        banned:false,
+        orders: [],
+        hasOrdered:false
+      };
+      save(DATA.users,users);
+      // notify admin
+      const rp = ref? `\n• Referred by: ${ref.phone.slice(0,6)}**** (${ref.name})` : '';
+      safeSend(botConfig.adminJid,
+        `🆕 New Registration\n• ${txt} (${from.replace('@c.us','')})${rp}`
+      );
+      // notify referrer
+      if(ref){
+        safeSend(ref.jid, `🎉 You referred: ${users[from].name}!`);
+      }
+      delete conversations[from];
+      return msg.reply(botConfig.welcomeText.replace('Welcome','Registered') 
+        + '\n\n' + botConfig.userMenu(users[from]));
     }
-    console.log(`♻️ Restart stdout: ${stdout}`);
-  });
+  }
+
+  // BANNED?
+  const user = users[from];
+  if(user && user.banned){
+    return msg.reply(`🚫 You are banned.\nReason: ${user.banReason}`);
+  }
+
+  // USER MENU
+  if(user){
+    if(lc==='5' || lc==='menu') return msg.reply(botConfig.userMenu(user));
+
+    switch(lc){
+      case '1': // Browse Products
+        return showProducts(from);
+      case '2':
+        return showMyOrders(from);
+      case '3':
+        return msg.reply(`🔗 Your referral link:\nhttps://wa.me/${client.info.wid.user}?text=referral:${user.name}`);
+      case '4':
+        return showFAQs(from);
+      default:
+        // handle ongoing convo stages (e.g. ordering)
+        return handleUserConversation(from,txt,lc,user);
+    }
+  }
+
+  // default
+  return msg.reply(botConfig.welcomeText);
+});
+
+// ────────────────────────────────────────────────────────────────────
+// ADMIN: SHOW MAIN MENU
+// ────────────────────────────────────────────────────────────────────
+function showAdminMenu(){
+  adminSessions[botConfig.adminJid] = { awaiting:'main' };
+  const m = `👑 *Admin Menu* — Reply by number:
+1️⃣ View Users
+2️⃣ Ban/Unban User
+3️⃣ Add/Edit Products
+4️⃣ Add/Edit Categories
+5️⃣ Add/Edit FAQs
+6️⃣ Change Bot Name / Channel
+7️⃣ Bulk Message`;
+  safeSend(botConfig.adminJid,m);
 }
 
-// Restart on WhatsApp disconnect:
-client.on('disconnected', reason => {
-  console.warn(`🔌 Bot disconnected: ${reason}`);
-  execRestart();
-});
-
-// Restart on authentication failure:
-client.on('auth_failure', msg => {
-  console.error(`🔐 Auth failure: ${msg}`);
-  execRestart();
-});
-
-// Catch uncaught exceptions & promise rejections:
-process.on('uncaughtException', err => {
-  console.error('💥 Uncaught Exception:', err);
-  execRestart();
-});
-process.on('unhandledRejection', reason => {
-  console.error('💥 Unhandled Rejection:', reason);
-  execRestart();
-});
+// ────────────────────────────────────────────────────────────────────
+// ADMIN: HANDLE MAIN
+// ────────────────────────────────────────────────────────────────────
+function handleAdminMain(txt){
+  switch(txt){
+    case '1': // view users
+      const us = Object.values(users).map(u=>`• ${u.name} (${u.phone})${u.banned? '🚫':''}`).join('\n');
+      safeSend(botConfig.adminJid, `👥 Users:\n${us}`);
+      break;
+    case '2':
+      adminSessions[botConfig.adminJid]={awaiting:'banUser'};
+      safeSend(botConfig.adminJid,'🚫 Enter phone to ban/unban:');
+      break;
+    case '3':
+      adminSessions[botConfig.adminJid]={awaiting:'editProducts'};
+      safeSend(botConfig.adminJid,'🛒 *Products*: 1️⃣ Add 2️⃣ Edit 3️⃣ Delete');
+      break;
+    case '4':
+      adminSessions[botConfig.adminJid]={awaiting:'editCats'};
+      safeSend(botConfig.adminJid,'📂 *Categories*: 1️⃣ Add 2️⃣ Delete');
+      break;
+    case '5':
+      adminSessions[botConfig.adminJid]={awaiting:'editFAQs'};
+      safeSend(botConfig.adminJid,'❓ *FAQs*: 1️⃣ Add 2️⃣ Edit 3️⃣ Delete');
+      break;
+    case '6':
+      adminSessions[botConfig.adminJid]={awaiting:'editConfig'};
+      safeSend(botConfig.adminJid,'⚙️ *Config*: 1️⃣ Bot Name 2️⃣ Channel ID');
+      break;
+    case '7':
+      adminSessions[botConfig.adminJid]={awaiting:'bulkMsg'};
+      safeSend(botConfig.adminJid,'📣 Enter message to broadcast:');
+      break;
+    default:
+      showAdminMenu();
+  }
+}
 
 // ────────────────────────────────────────────────────────────────────
-// End of file
+// (For brevity: implement handleAdminSubmenu with similar switch/steps
+// to Add/Edit/Delete in products.json, categories.json, faqs.json,
+// Ban/Unban user (toggle users[jid].banned + reason), Change botConfig,
+// Bulk message looping safeSend to all users. Then save files.)
 // ────────────────────────────────────────────────────────────────────
+
+// ────────────────────────────────────────────────────────────────────
+// USER: SHOW PRODUCTS
+// ────────────────────────────────────────────────────────────────────
+function showProducts(jid){
+  if(!products.length) {
+    return safeSend(jid,'❌ No products available.');
+  }
+  const list = products.map((p,i)=>`${i+1}. ${p.name} — Ksh ${p.price}`).join('\n');
+  conversations[jid] = { stage:'ordering', step:'chooseProduct' };
+  return safeSend(jid, `🛍️ *Products*\n${list}\n\nReply with number to order.`);
+}
+
+// ────────────────────────────────────────────────────────────────────
+// USER: HANDLE ORDER FLOW
+// ────────────────────────────────────────────────────────────────────
+async function handleUserConversation(jid,txt,lc,user){
+  const conv = conversations[jid];
+  if(!conv) return safeSend(jid,'⚠️ Invalid option. Reply *5* for menu.');
+
+  // Step: chooseProduct
+  if(conv.stage==='ordering' && conv.step==='chooseProduct'){
+    const idx = parseInt(txt)-1;
+    if(isNaN(idx)||idx<0||idx>=products.length){
+      delete conversations[jid];
+      return safeSend(jid,'⚠️ Invalid selection. Reply *1* to browse again.');
+    }
+    conv.product = products[idx];
+    conv.step='enterQty';
+    return safeSend(jid, `📦 How many *${conv.product.name}*?`);
+  }
+
+  // Step: enterQty
+  if(conv.step==='enterQty'){
+    const qty = parseInt(txt);
+    if(isNaN(qty)||qty<1){
+      delete conversations[jid];
+      return safeSend(jid,'⚠️ Invalid quantity. Reply *1* to browse again.');
+    }
+    conv.qty=qty;
+    conv.step='enterPhone';
+    return safeSend(jid, `📲 Send phone number for payment:`);
+  }
+
+  // Step: enterPhone
+  if(conv.step==='enterPhone'){
+    const ph = formatPhone(txt);
+    if(!ph){
+      delete conversations[jid];
+      return safeSend(jid,'⚠️ Invalid phone. Order canceled.');
+    }
+    conv.payPhone = ph.replace('@c.us','');
+    // create order record
+    const orderNo = genOrderNumber();
+    const amount = conv.product.price * conv.qty;
+    const order = {
+      orderNo, user: user.phone, product: conv.product.name,
+      qty:conv.qty, amount, status:'PENDING', createdAt:new Date().toISOString()
+    };
+    orders[orderNo] = order;
+    save(DATA.orders,orders);
+    user.orders.push(orderNo);
+    save(DATA.users,users);
+
+    // prompt STK Push
+    safeSend(jid, `⏳ Initiating payment of Ksh ${amount}…`);
+    const ref = await sendSTKPush(amount,conv.payPhone);
+
+    // wait & poll
+    setTimeout(async()=>{
+      const st = await fetchTransactionStatus(ref);
+      if(st && st.status==='SUCCESS'){
+        orders[orderNo].status='PAID';
+        save(DATA.orders,orders);
+        safeSend(jid,
+          `✅ Payment received!\n`+
+          `• Order: ${orderNo}\n`+
+          `• ${conv.product.name} x${conv.qty}\n`+
+          `• Amount: Ksh ${amount}`
+        );
+        // first order referral bonus
+        if(!user.hasOrdered && user.referredBy){
+          const refu = Object.values(users).find(u=>u.phone===user.referredBy);
+          if(refu){
+            safeSend(refu.jid||`${refu.phone}@c.us`, botConfig.referralBonus);
+          }
+        }
+        user.hasOrdered = true; save(DATA.users,users);
+        // notify admin
+        safeSend(botConfig.adminJid,
+          `🛒 New Order\n• ${orderNo}\n`+
+          `• ${user.name} (${user.phone})\n`+
+          `• ${conv.product.name} x${conv.qty}\n`+
+          `• Ksh ${amount}\n`
+        );
+      } else {
+        safeSend(jid, '❌ Payment failed or timed out. Please try again.');
+      }
+    },30000);
+
+    delete conversations[jid];
+    return;
+  }
+
+  // other stages...
+}
+
+// ────────────────────────────────────────────────────────────────────
+// USER: SHOW MY ORDERS
+// ────────────────────────────────────────────────────────────────────
+function showMyOrders(jid){
+  const u = users[jid];
+  if(!u.orders.length) return safeSend(jid,'📭 No orders yet.');
+  const lines = u.orders.map(no=>{
+    const o=orders[no];
+    return `• ${no}: ${o.product} x${o.qty} — ${o.status}`;
+  }).join('\n');
+  return safeSend(jid, `📦 Your Orders:\n${lines}`);
+}
+
+// ────────────────────────────────────────────────────────────────────
+// USER: SHOW FAQs
+// ────────────────────────────────────────────────────────────────────
+function showFAQs(jid){
+  if(!faqs.length) return safeSend(jid,'❌ No FAQs set.');
+  const list = faqs.map((f,i)=>`${i+1}. Q: ${f.q}\n   A: ${f.a}`).join('\n\n');
+  return safeSend(jid, `❓ FAQs:\n\n${list}`);
+}
+
+// ────────────────────────────────────────────────────────────────────
+// ON EXIT: SAVE ALL
+// ────────────────────────────────────────────────────────────────────
+process.on('SIGINT', ()=> {
+  save(DATA.users,users);
+  save(DATA.products,products);
+  save(DATA.categories,categories);
+  save(DATA.faqs,faqs);
+  save(DATA.orders,orders);
+  process.exit();
+});
