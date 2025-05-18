@@ -134,6 +134,7 @@ async function checkSTK(ref) {
 // ────────────────────────────────────────────────────────────────────
 const client = new Client({ authStrategy: new LocalAuth() });
 let currentQR = null;
+
 client.on('qr', qr => {
   currentQR = qr;
   qrcodeTerminal.generate(qr, { small: true });
@@ -148,12 +149,70 @@ const app = express();
 app.get('/', async (_, res) => {
   const img = currentQR ? await QRCode.toDataURL(currentQR) : '';
   res.send(`
-    <h1>Scan to join ${CONFIG.botName}</h1>
-    ${img ? `<img src="${img}"/>` : '<p>Waiting for QR…</p>'}
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8" />
+      <title>Scan to Join ${CONFIG.botName}</title>
+      <style>
+        body {
+          margin: 0;
+          padding: 0;
+          height: 100vh;
+          background: url('https://source.unsplash.com/1600x900/?nature,forest') no-repeat center center fixed;
+          background-size: cover;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .glass {
+          background: rgba(255, 255, 255, 0.2);
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+          border-radius: 16px;
+          border: 1px solid rgba(255, 255, 255, 0.3);
+          padding: 2rem;
+          text-align: center;
+          box-shadow: 0 8px 32px rgba(0,0,0,0.37);
+          max-width: 320px;
+          width: 90%;
+        }
+        h1 {
+          margin-bottom: 1rem;
+          color: #fff;
+          text-shadow: 1px 1px 4px rgba(0,0,0,0.7);
+        }
+        img.qr {
+          width: 200px;
+          height: 200px;
+          margin-bottom: 1rem;
+        }
+        .footer {
+          margin-top: 1.5rem;
+          font-size: 0.8rem;
+          color: #eee;
+          text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+        }
+      </style>
+    </head>
+    <body>
+      <div class="glass">
+        <h1>🔗 Scan to Join <strong>${CONFIG.botName}</strong></h1>
+        ${img
+          ? `<img class="qr" src="${img}" alt="QR Code to join ${CONFIG.botName}">`
+          : `<p style="color:#fff;">Waiting for QR code...</p>`
+        }
+        <div class="footer">
+          Created by <strong>FY'S PROPERTY</strong><br>
+          Empowering your conversations with seamless automation and innovation.
+        </div>
+      </div>
+    </body>
+    </html>
   `);
 });
-app.listen(3000, () => console.log('🔗 QR at http://localhost:3000'));
-
+app.listen(3000, () => console.log('🌐 QR dashboard running at http://localhost:3000'));
 // ────────────────────────────────────────────────────────────────────
 // MAIN MESSAGE HANDLER
 // ────────────────────────────────────────────────────────────────────
