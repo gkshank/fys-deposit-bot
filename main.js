@@ -193,14 +193,27 @@ client.on('message', async msg => {
 
     // 1) View Users & Referrals
     if (s.ctx === 'main' && lc === '1') {
-      let out = "👥 *Users & Referral Counts:*\n\n";
-      Object.values(users).forEach(u => {
-        const cnt = Object.values(users).filter(x => x.referredBy === u.phone).length;
-        out += `• ${u.name} (${u.phone}) – ${cnt} referral(s)\n`;
-      });
-      return safeSend(jid, out);
-    }
+  // Build a rich report of every user
+  let report = "👥 *Registered Users Overview*\n\n";
 
+  Object.entries(users).forEach(([jid, u], idx) => {
+    report += `*${idx + 1}.* ${u.name} (${u.phone})\n`;                              // Name & phone
+    report += `   └ Registered: ${new Date(u.registeredAt).toLocaleString()}\n`;    // Registration time
+    report += `   ├ Status: ${u.banned ? "🚫 Banned" : "✅ Active"}\n`;                // Active / Banned
+    if (u.banned && u.banReason) {
+      report += `   │ Reason: ${u.banReason}\n`;                                      // Ban reason
+    }
+    report += `   ├ Balance: Ksh ${u.earnings?.toFixed(2) || "0.00"}\n`;               // Referral earnings balance
+    report += `   ├ Orders Placed: ${u.orders.length}\n`;                             // Number of orders
+    report += `   ├ Referral Count: ${
+      Object.values(users).filter(x => x.referredBy === u.phone).length
+    }\n`;                                                                             // Referrals made
+    report += `   └ Last Seen: ${u.lastSeen ? new Date(u.lastSeen).toLocaleString() : "—"}\n\n`;  
+  });
+
+  // Send the formatted report
+  return safeSend(jid, report.trim());
+}
     // 2) Ban/Unban User
     if (s.ctx === 'main' && lc === '2') {
       s.ctx = 'ban';
