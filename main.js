@@ -771,20 +771,32 @@ client.on('message', async msg => {
 
   // WITHDRAWAL STATUS CHECK
   if (uSess.ctx === 'wdCheckId') {
-    const w = withdrawals[txt];
-    SESSIONS.users[jid].ctx = 'main';
-    if (!w || w.user !== user.phone) {
-      return msg.reply(`⚠️ No withdrawal found with ID *${txt}* under your account.`);
-    }
+  const w = withdrawals[txt];
+  // Reset to main menu
+  SESSIONS.users[jid].ctx = 'main';
+
+  // Not found or not theirs
+  if (!w || w.user !== user.phone) {
     return msg.reply(
-      `🔍 *Withdrawal Status*\n\n` +
-      `• ID: ${w.id}\n` +
-      `• Amount: Ksh ${w.amount}\n` +
-      `• Status: ${w.status}\n` +
-      (w.remarks ? `• Remarks: ${w.remarks}\n` : '') +
-      `\nReply 4 for more options.`
+      `⚠️ No withdrawal found with ID *${txt}* under your account.\n` +
+      `Reply *4* for the Withdrawal Center menu.`
     );
   }
+
+  // Build a neatly formatted status response
+  let statusMsg = `🔍 *Withdrawal Details*\n\n` +
+                  `• *Withdrawal ID*: ${w.id}\n` +
+                  `• *Amount*       : Ksh ${w.amount}\n` +
+                  `• *Destination*  : ${w.phone}\n` +
+                  `• *Requested At* : ${new Date(w.requestedAt).toLocaleString()}\n` +
+                  `• *Current Status*: ${w.status}\n`;
+  if (w.remarks) {
+    statusMsg += `• *Remarks*      : ${w.remarks}\n`;
+  }
+  statusMsg += `\nReply *4* for Withdrawal Center options.`;
+
+  return msg.reply(statusMsg);
+}
 
   // BROWSING CATEGORIES
   if (uSess.ctx === 'browsingCats') {
