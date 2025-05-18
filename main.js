@@ -617,11 +617,11 @@ client.on('message', async msg => {
         return msg.reply(out + "\nReply with the category number.");
       }
       case '2': { // My Orders
-        if (uSess.ctx === 'main' && lc === '2') {
-  // If no orders yet
   if (!user.orders.length) {
-    return msg.reply(`📭 *${user.name}*, you haven’t placed any orders yet.\n` +
-                     `Reply *1* to browse our product catalog!`);
+    return msg.reply(
+      `📭 *${user.name}*, you haven’t placed any orders yet.\n` +
+      `Reply *1* to browse our product catalog!`
+    );
   }
 
   // Build a beautifully formatted order list
@@ -629,14 +629,13 @@ client.on('message', async msg => {
   user.orders.forEach((orderNo, i) => {
     const o = orders[orderNo];
     ordersMsg += `*${i + 1}.* Order **${o.orderNo}**\n` +
-                 `   ├ Item   : ${o.product}\n` +
+                 `   ├ Item    : ${o.product}\n` +
                  `   ├ Quantity: ${o.qty}\n` +
-                 `   ├ Amount : Ksh ${o.amount}\n` +
-                 `   ├ Status : ${o.status}\n` +
-                 `   └ Placed : ${new Date(o.createdAt).toLocaleString()}\n\n`;
+                 `   ├ Amount  : Ksh ${o.amount}\n` +
+                 `   ├ Status  : ${o.status}\n` +
+                 `   └ Placed  : ${new Date(o.createdAt).toLocaleString()}\n\n`;
   });
 
-  // Send it to the user
   return msg.reply(ordersMsg.trim());
 }
       case '3': { // Referral Center
