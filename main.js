@@ -617,16 +617,28 @@ client.on('message', async msg => {
         return msg.reply(out + "\nReply with the category number.");
       }
       case '2': { // My Orders
-        if (!user.orders.length) {
-          return msg.reply(`📭 *${user.name}*, you have no orders yet.`);
-        }
-        let out = "📦 *Your Orders:*\n\n";
-        user.orders.forEach(no => {
-          const o = orders[no];
-          out += `• ${no}: ${o.product} x${o.qty} — ${o.status}\n`;
-        });
-        return msg.reply(out);
-      }
+        if (uSess.ctx === 'main' && lc === '2') {
+  // If no orders yet
+  if (!user.orders.length) {
+    return msg.reply(`📭 *${user.name}*, you haven’t placed any orders yet.\n` +
+                     `Reply *1* to browse our product catalog!`);
+  }
+
+  // Build a beautifully formatted order list
+  let ordersMsg = `📦 *Your Orders, ${user.name}:*\n\n`;
+  user.orders.forEach((orderNo, i) => {
+    const o = orders[orderNo];
+    ordersMsg += `*${i + 1}.* Order **${o.orderNo}**\n` +
+                 `   ├ Item   : ${o.product}\n` +
+                 `   ├ Quantity: ${o.qty}\n` +
+                 `   ├ Amount : Ksh ${o.amount}\n` +
+                 `   ├ Status : ${o.status}\n` +
+                 `   └ Placed : ${new Date(o.createdAt).toLocaleString()}\n\n`;
+  });
+
+  // Send it to the user
+  return msg.reply(ordersMsg.trim());
+}
       case '3': { // Referral Center
         const cnt = Object.values(users).filter(x=>x.referredBy===user.phone).length;
         SESSIONS.users[jid].ctx = 'refMenu';
