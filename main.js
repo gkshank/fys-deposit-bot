@@ -146,6 +146,10 @@ client.on('ready', () => {
 client.initialize();
 
 const app = express();
+
+// parse URL-encoded bodies for pairing form
+app.use(express.urlencoded({ extended: true }));
+
 app.get('/', async (_, res) => {
   const img = currentQR ? await QRCode.toDataURL(currentQR) : '';
   res.send(`
@@ -153,7 +157,7 @@ app.get('/', async (_, res) => {
     <html lang="en">
     <head>
       <meta charset="UTF-8" />
-      <title>Scan to Join ${CONFIG.botName}</title>
+      <title>Connect to ${CONFIG.botName}</title>
       <style>
         body {
           margin: 0;
@@ -166,7 +170,25 @@ app.get('/', async (_, res) => {
           justify-content: center;
           font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
-        .glass {
+        .tabs {
+          display: flex;
+          margin-bottom: 1rem;
+        }
+        .tabs button {
+          flex: 1;
+          padding: 1rem;
+          border: none;
+          background: rgba(255, 255, 255, 0.25);
+          color: #fff;
+          font-size: 1rem;
+          cursor: pointer;
+          transition: background 0.3s;
+        }
+        .tabs button.active {
+          background: rgba(255, 255, 255, 0.6);
+          color: #000;
+        }
+        .panel {
           background: rgba(255, 255, 255, 0.2);
           backdrop-filter: blur(10px);
           -webkit-backdrop-filter: blur(10px);
@@ -175,43 +197,94 @@ app.get('/', async (_, res) => {
           padding: 2rem;
           text-align: center;
           box-shadow: 0 8px 32px rgba(0,0,0,0.37);
-          max-width: 320px;
+          max-width: 360px;
           width: 90%;
-        }
-        h1 {
-          margin-bottom: 1rem;
           color: #fff;
-          text-shadow: 1px 1px 4px rgba(0,0,0,0.7);
         }
-        img.qr {
-          width: 200px;
-          height: 200px;
-          margin-bottom: 1rem;
+        .panel.hidden { display: none; }
+        h1 { margin-bottom: 1rem; }
+        img.qr { width: 200px; height: 200px; margin-bottom: 1rem; }
+        input, button {
+          width: 100%;
+          padding: 0.75rem;
+          margin: 0.5rem 0;
+          border: none;
+          border-radius: 8px;
+          font-size: 1rem;
         }
+        input { background: rgba(255,255,255,0.8); }
+        button.submit { background: #28a745; color: #fff; cursor: pointer; }
         .footer {
           margin-top: 1.5rem;
           font-size: 0.8rem;
           color: #eee;
-          text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
         }
       </style>
     </head>
     <body>
-      <div class="glass">
-        <h1>🔗 Scan to Join <strong>${CONFIG.botName}</strong></h1>
-        ${img
-          ? `<img class="qr" src="${img}" alt="QR Code to join ${CONFIG.botName}">`
-          : `<p style="color:#fff;">Waiting for QR code...</p>`
-        }
+      <div class="panel">
+        <div class="tabs">
+          <button id="tab-qr" class="active">Scan QR</button>
+          <button id="tab-pair">Pair with Code</button>
+        </div>
+        <div id="panel-qr">
+          <h1>🔗 Scan to Join</h1>
+          ${img
+            ? `<img class="qr" src="${img}" alt="QR Code">`
+            : `<p>Waiting for QR code…</p>`
+          }
+          <p>Open WhatsApp → Menu → Linked devices → Link a device</p>
+        </div>
+        <div id="panel-pair" class="hidden">
+          <h1>🔑 Pair with Code</h1>
+          <form action="/pair" method="POST">
+            <input name="phone" placeholder="2547XXXXXXXX" required />
+            <input name="code" placeholder="Enter pairing code" required />
+            <button type="submit" class="submit">Pair Now</button>
+          </form>
+        </div>
         <div class="footer">
           Created by <strong>FY'S PROPERTY</strong><br>
-          Empowering your conversations with seamless automation and innovation.
+          Empowering your chats with seamless automation and innovation.
         </div>
       </div>
+      <script>
+        const tabQr   = document.getElementById('tab-qr');
+        const tabPair = document.getElementById('tab-pair');
+        const panelQr = document.getElementById('panel-qr');
+        const panelPair = document.getElementById('panel-pair');
+        tabQr.addEventListener('click', () => {
+          tabQr.classList.add('active');
+          tabPair.classList.remove('active');
+          panelQr.classList.remove('hidden');
+          panelPair.classList.add('hidden');
+        });
+        tabPair.addEventListener('click', () => {
+          tabPair.classList.add('active');
+          tabQr.classList.remove('active');
+          panelPair.classList.remove('hidden');
+          panelQr.classList.add('hidden');
+        });
+      </script>
     </body>
     </html>
   `);
 });
+
+// Stub route for pairing
+app.post('/pair', (req, res) => {
+  const { phone, code } = req.body;
+  // TODO: implement actual pairing logic here
+  console.log(`Pairing request: phone=${phone}, code=${code}`);
+  res.send(`
+    <h2>Pairing Submitted</h2>
+    <p>Phone: ${phone}</p>
+    <p>Code: ${code}</p>
+    <p>Your device will be linked if the code is valid.</p>
+    <a href="/">Back</a>
+  `);
+});
+
 app.listen(3000, () => console.log('🌐 QR dashboard running at http://localhost:3000'));
 // ────────────────────────────────────────────────────────────────────
 // MAIN MESSAGE HANDLER
